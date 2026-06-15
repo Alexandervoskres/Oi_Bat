@@ -9,12 +9,31 @@ const ROLE_LABELS = {
 const NAV_ITEMS = [
   { id: "dashboard", label: "Дашборд", adminOnly: false },
   { id: "warehouse", label: "Склад", adminOnly: false },
+  { id: "risks", label: "Риски", adminOnly: false },
   { id: "procurement", label: "Закупки", adminOnly: false },
+  { id: "chat", label: "AI-советник", adminOnly: false },
   { id: "imports", label: "Excel и история", adminOnly: false },
   { id: "reports", label: "Отчеты", adminOnly: false },
   { id: "users", label: "Пользователи", adminOnly: true },
   { id: "settings", label: "Сервер", adminOnly: false },
 ];
+
+const RISK_STATUS_OPTIONS = [
+  { code: "", label: "— авто —" },
+  { code: "out_of_stock", label: "Нет в наличии" },
+  { code: "order_now", label: "Срочно заказать" },
+  { code: "discount", label: "Сделать скидку" },
+  { code: "dead_stock", label: "Мертвый груз" },
+  { code: "growing", label: "Растущий спрос" },
+  { code: "ok", label: "Норма" },
+];
+
+const PRIORITY_LABELS = {
+  critical: "Критический",
+  high: "Высокий",
+  medium: "Средний",
+  low: "Низкий",
+};
 
 const state = {
   token: localStorage.getItem("skladai_token") || "",
@@ -32,6 +51,18 @@ const state = {
   procurement: {
     rows: [],
     quantities: {},
+    loading: false,
+    error: "",
+  },
+  risks: {
+    rows: [],
+    loading: false,
+    error: "",
+    message: "",
+    filter: { status: "", priority: "", mode: "" },
+  },
+  chat: {
+    messages: [],
     loading: false,
     error: "",
   },
@@ -54,6 +85,13 @@ const state = {
     },
   },
   modal: {
+    open: false,
+    mode: "edit", // "edit" | "create"
+    product: null,
+    saving: false,
+    error: "",
+  },
+  riskModal: {
     open: false,
     product: null,
     saving: false,
@@ -154,6 +192,11 @@ function render() {
     return;
   }
 
+  if (state.riskModal.open) {
+    bindRiskModal();
+    return;
+  }
+
   if (!state.dashboard) {
     refreshDashboard();
     return;
@@ -232,6 +275,7 @@ function appTemplate() {
         ${activeTemplate()}
       </main>
       ${state.modal.open ? modalTemplate() : ""}
+      ${state.riskModal.open ? riskModalTemplate() : ""}
     </div>
   `;
 }
@@ -273,6 +317,7 @@ function bindShell() {
       state.active = buttonEl.dataset.nav;
       render();
       if (state.active === "warehouse" && !state.warehouse.rows.length) await loadProducts();
+      if (state.active === "risks") await loadRisks();
       if (state.active === "procurement") await loadProcurement();
       if (state.active === "imports" && !state.imports.rows.length) await loadImports();
       if (state.active === "users" && !state.users.rows.length) await loadUsers();
@@ -287,7 +332,9 @@ function activeTemplate() {
   }
   if (state.active === "dashboard") return dashboardTemplate();
   if (state.active === "warehouse") return warehouseTemplate();
+  if (state.active === "risks") return risksTemplate();
   if (state.active === "procurement") return procurementTemplate();
+  if (state.active === "chat") return chatTemplate();
   if (state.active === "imports") return importsTemplate();
   if (state.active === "reports") return reportsTemplate();
   if (state.active === "users" && state.user.role === "admin") return usersTemplate();
@@ -297,7 +344,9 @@ function activeTemplate() {
 function bindActiveScreen() {
   if (state.active === "dashboard") bindDashboard();
   if (state.active === "warehouse") bindWarehouse();
+  if (state.active === "risks") bindRisks();
   if (state.active === "procurement") bindProcurement();
+  if (state.active === "chat") bindChat();
   if (state.active === "imports") bindImports();
   if (state.active === "reports") bindReports();
   if (state.active === "users" && state.user.role === "admin") bindUsers();
@@ -356,6 +405,7 @@ function dashboardTemplate() {
           <span>AI-советник</span>
           <p>${escapeHtml(data.ai_summary)}</p>
         </div>
+        <button class="button ai-strip-btn" type="button" id="open-chat"><span>Спросить AI</span></button>
       </div>
 
       <div class="dashboard-grid">
@@ -423,6 +473,10 @@ function dashboardTemplate() {
 
 function bindDashboard() {
   document.getElementById("refresh-dashboard").addEventListener("click", refreshDashboard);
+  document.getElementById("open-chat")?.addEventListener("click", () => {
+    state.active = "chat";
+    render();
+  });
 }
 
 function forecastTable(rows) {
@@ -471,6 +525,7 @@ function warehouseTemplate() {
   const model = state.warehouse;
   const statuses = ["", "Срочно заказать", "Нет в наличии", "Сделать скидку", "Мертвый груз", "Растущий спрос", "Норма"];
   const canEdit = ["admin", "manager"].includes(state.user.role);
+  const isAdmin = state.user.role === "admin";
   return `
     <section class="screen">
       <header class="screen-header">
@@ -487,6 +542,7 @@ function warehouseTemplate() {
             ${statuses.map((item) => `<option value="${escapeHtml(item)}" ${model.status === item ? "selected" : ""}>${escapeHtml(item || "Все статусы")}</option>`).join("")}
           </select>
           ${button("Найти", "", 'type="button" id="warehouse-load"')}
+          ${canEdit ? button("+ Создать товар", "button-secondary", 'type="button" id="warehouse-create"') : ""}
         </div>
       </header>
 
@@ -528,8 +584,18 @@ function warehouseTemplate() {
                                 <td>${escapeHtml(item.sold_month)} шт.</td>
                                 <td>${escapeHtml(item.margin_percent)}%</td>
                                 <td>${escapeHtml(formatDate(item.last_sale_date))}</td>
-                                <td>${statusPill(item.status, item.severity)}</td>
-                                ${canEdit ? `<td><button class="btn-edit-product" data-id="${item.id}" title="Редактировать">✏️</button></td>` : ""}
+                                <td>
+                                  ${statusPill(item.status, item.severity)}
+                                  ${item.is_manual_risk ? `<span class="manual-tag" title="Статус задан вручную">ручной</span>` : ""}
+                                </td>
+                                ${
+                                  canEdit
+                                    ? `<td class="row-actions">
+                                        <button class="btn-icon btn-edit-product" data-id="${item.id}" title="Редактировать">✏️</button>
+                                        ${isAdmin ? `<button class="btn-icon btn-delete-product" data-id="${item.id}" data-name="${escapeHtml(item.name)}" title="Удалить">🗑</button>` : ""}
+                                      </td>`
+                                    : ""
+                                }
                               </tr>
                             `,
                           )
@@ -551,9 +617,26 @@ function bindWarehouse() {
   document.getElementById("warehouse-search").addEventListener("keydown", (event) => {
     if (event.key === "Enter") loadProducts();
   });
+  document.getElementById("warehouse-create")?.addEventListener("click", openCreateModal);
   document.querySelectorAll(".btn-edit-product").forEach((btn) => {
     btn.addEventListener("click", () => openProductModal(Number(btn.dataset.id)));
   });
+  document.querySelectorAll(".btn-delete-product").forEach((btn) => {
+    btn.addEventListener("click", () => deleteProduct(Number(btn.dataset.id), btn.dataset.name));
+  });
+}
+
+async function deleteProduct(productId, name) {
+  if (!window.confirm(`Удалить товар «${name}»? Действие необратимо.`)) return;
+  try {
+    await api(`/api/products/${productId}`, { method: "DELETE" });
+    state.warehouse.rows = state.warehouse.rows.filter((r) => r.id !== productId);
+    render();
+    await refreshDashboard();
+  } catch (error) {
+    state.warehouse.error = error.message;
+    render();
+  }
 }
 
 async function loadProducts() {
@@ -580,16 +663,44 @@ async function loadProducts() {
 
 // ─── Product Modal ────────────────────────────────────────────────────────────
 
+const BLANK_PRODUCT = {
+  id: null,
+  sku: "",
+  name: "",
+  category: "Без категории",
+  stock: 0,
+  sold_month: 0,
+  avg_monthly_sales: 0,
+  purchase_price: 0,
+  sale_price: 0,
+  last_sale_date: null,
+  supplier: "",
+  min_stock: 5,
+  lead_time_days: 7,
+  notes: "",
+  do_not_order: false,
+  is_seasonal: false,
+  is_on_demand: false,
+  risk_status_override: null,
+  risk_priority: null,
+  risk_note: "",
+  excluded_from_ai: false,
+  is_manual_risk: false,
+  margin_percent: 0,
+  status: "Норма",
+  severity: "normal",
+};
+
+function openCreateModal() {
+  state.modal = { open: true, mode: "create", product: { ...BLANK_PRODUCT }, saving: false, error: "" };
+  render();
+}
+
 async function openProductModal(productId) {
   try {
     const response = await api(`/api/products/${productId}`);
     const product = await response.json();
-    state.modal = {
-      open: true,
-      product,
-      saving: false,
-      error: "",
-    };
+    state.modal = { open: true, mode: "edit", product, saving: false, error: "" };
     render();
   } catch (error) {
     state.warehouse.error = error.message;
@@ -598,21 +709,40 @@ async function openProductModal(productId) {
 }
 
 function closeModal() {
-  state.modal = { open: false, product: null, saving: false, error: "" };
+  state.modal = { open: false, mode: "edit", product: null, saving: false, error: "" };
   render();
+}
+
+function dateInputValue(value) {
+  if (!value) return "";
+  return String(value).slice(0, 10);
+}
+
+function numField(id, label, value, attrs = "") {
+  return `
+    <label class="form-label">
+      <span>${escapeHtml(label)}</span>
+      <input id="${id}" type="number" value="${escapeHtml(value)}" ${attrs} />
+    </label>
+  `;
 }
 
 function modalTemplate() {
   const p = state.modal.product;
   if (!p) return "";
+  const isCreate = state.modal.mode === "create";
+  const canRisk = ["admin", "manager"].includes(state.user.role);
+  const isAdmin = state.user.role === "admin";
+
   return `
     <div class="modal-overlay" id="modal-overlay">
       <div class="modal-panel" role="dialog" aria-modal="true">
         <div class="modal-header">
           <div>
-            <span class="eyebrow">карточка товара</span>
-            <h3>${escapeHtml(p.name)}</h3>
-            <small style="color:var(--muted)">${escapeHtml(p.sku)}</small>
+            <span class="eyebrow">${isCreate ? "новый товар" : "карточка товара"}</span>
+            <h3>${isCreate ? "Создание товара" : escapeHtml(p.name)}</h3>
+            ${!isCreate ? `<small style="color:var(--muted)">${escapeHtml(p.sku)}</small>` : ""}
+            ${!isCreate && p.is_manual_risk ? `<div class="manual-banner">⚑ Статус риска переопределён вручную</div>` : ""}
           </div>
           <button class="modal-close" id="modal-close">✕</button>
         </div>
@@ -621,6 +751,10 @@ function modalTemplate() {
 
         <form id="product-edit-form" class="product-form">
           <div class="form-grid-2">
+            <label class="form-label">
+              <span>Артикул (SKU)</span>
+              <input id="pf-sku" value="${escapeHtml(p.sku)}" ${isCreate ? "" : ""} />
+            </label>
             <label class="form-label">
               <span>Название</span>
               <input id="pf-name" value="${escapeHtml(p.name)}" />
@@ -633,21 +767,25 @@ function modalTemplate() {
               <span>Поставщик</span>
               <input id="pf-supplier" value="${escapeHtml(p.supplier)}" />
             </label>
-            <div class="form-grid-2">
-              <label class="form-label">
-                <span>Мин. остаток</span>
-                <input id="pf-min-stock" type="number" min="0" value="${escapeHtml(p.min_stock)}" />
-              </label>
-              <label class="form-label">
-                <span>Срок поставки (дн.)</span>
-                <input id="pf-lead-time" type="number" min="1" value="${escapeHtml(p.lead_time_days)}" />
-              </label>
-            </div>
+          </div>
+
+          <div class="form-grid-3">
+            ${numField("pf-stock", "Остаток", p.stock, 'min="0"')}
+            ${numField("pf-sold-month", "Продано/мес", p.sold_month, 'min="0"')}
+            ${numField("pf-avg", "Ср. продажи/мес", p.avg_monthly_sales, 'min="0" step="0.1"')}
+            ${numField("pf-purchase", "Закупочная цена", p.purchase_price, 'min="0" step="0.01"')}
+            ${numField("pf-sale", "Продажная цена", p.sale_price, 'min="0" step="0.01"')}
+            <label class="form-label">
+              <span>Последняя продажа</span>
+              <input id="pf-last-sale" type="date" value="${dateInputValue(p.last_sale_date)}" />
+            </label>
+            ${numField("pf-min-stock", "Мин. остаток", p.min_stock, 'min="0"')}
+            ${numField("pf-lead-time", "Срок поставки (дн.)", p.lead_time_days, 'min="1"')}
           </div>
 
           <label class="form-label">
             <span>Комментарий менеджера</span>
-            <textarea id="pf-notes" rows="3" style="width:100%;background:#0f172a;border:1px solid var(--line);color:var(--text);padding:10px;font:inherit;resize:vertical">${escapeHtml(p.notes)}</textarea>
+            <textarea id="pf-notes" rows="2" class="form-textarea">${escapeHtml(p.notes)}</textarea>
           </label>
 
           <div class="flag-group">
@@ -665,16 +803,56 @@ function modalTemplate() {
             </label>
           </div>
 
-          <div class="modal-info-grid">
-            <div><span>Остаток</span><strong>${escapeHtml(p.stock)} шт.</strong></div>
-            <div><span>Продано/мес</span><strong>${escapeHtml(p.sold_month)} шт.</strong></div>
-            <div><span>Маржа</span><strong>${escapeHtml(p.margin_percent)}%</strong></div>
-            <div><span>AI-статус</span>${statusPill(p.status, p.severity)}</div>
-          </div>
+          ${
+            !isCreate && canRisk
+              ? `
+            <fieldset class="risk-fieldset">
+              <legend>Ручная корректировка риска</legend>
+              <div class="form-grid-2">
+                <label class="form-label">
+                  <span>Статус (переопределение)</span>
+                  <select id="pf-risk-status">
+                    ${RISK_STATUS_OPTIONS.map((o) => `<option value="${o.code}" ${(p.risk_status_override || "") === o.code ? "selected" : ""}>${escapeHtml(o.label)}</option>`).join("")}
+                  </select>
+                </label>
+                <label class="form-label">
+                  <span>Приоритет</span>
+                  <select id="pf-risk-priority">
+                    <option value="" ${!p.risk_priority ? "selected" : ""}>— авто —</option>
+                    ${["critical", "high", "medium", "low"].map((pr) => `<option value="${pr}" ${p.risk_priority === pr ? "selected" : ""}>${escapeHtml(PRIORITY_LABELS[pr])}</option>`).join("")}
+                  </select>
+                </label>
+              </div>
+              <label class="form-label">
+                <span>Заметка по риску (заменит авто-рекомендацию)</span>
+                <textarea id="pf-risk-note" rows="2" class="form-textarea">${escapeHtml(p.risk_note || "")}</textarea>
+              </label>
+              <label class="flag-check">
+                <input type="checkbox" id="pf-excluded-ai" ${p.excluded_from_ai ? "checked" : ""} />
+                <span>Исключить из AI-рекомендаций</span>
+              </label>
+            </fieldset>
+          `
+              : ""
+          }
+
+          ${
+            !isCreate
+              ? `
+            <div class="modal-info-grid">
+              <div><span>Маржа</span><strong>${escapeHtml(p.margin_percent)}%</strong></div>
+              <div><span>AI-статус</span>${statusPill(p.status, p.severity)}</div>
+            </div>
+          `
+              : ""
+          }
 
           <div class="modal-actions">
-            <button type="button" class="button button-ghost" id="modal-cancel">Отмена</button>
-            ${button(state.modal.saving ? "Сохраняю..." : "Сохранить", "", `type="submit" ${state.modal.saving ? "disabled" : ""}`)}
+            ${!isCreate && isAdmin ? `<button type="button" class="button button-danger" id="modal-delete"><span>Удалить</span></button>` : ""}
+            <div class="modal-actions-right">
+              <button type="button" class="button button-ghost" id="modal-cancel">Отмена</button>
+              ${button(state.modal.saving ? "Сохраняю..." : isCreate ? "Создать" : "Сохранить", "", `type="submit" ${state.modal.saving ? "disabled" : ""}`)}
+            </div>
           </div>
         </form>
       </div>
@@ -689,39 +867,101 @@ function bindModal() {
   document.getElementById("modal-close").addEventListener("click", closeModal);
   document.getElementById("modal-cancel").addEventListener("click", closeModal);
   document.getElementById("product-edit-form").addEventListener("submit", saveProduct);
+  document.getElementById("modal-delete")?.addEventListener("click", () => {
+    const p = state.modal.product;
+    closeModal();
+    deleteProduct(p.id, p.name);
+  });
 
-  const onKey = (e) => { if (e.key === "Escape") { closeModal(); document.removeEventListener("keydown", onKey); } };
+  const onKey = (e) => {
+    if (e.key === "Escape") {
+      closeModal();
+      document.removeEventListener("keydown", onKey);
+    }
+  };
   document.addEventListener("keydown", onKey);
+}
+
+function readProductForm() {
+  const get = (id) => document.getElementById(id);
+  return {
+    sku: get("pf-sku").value.trim(),
+    name: get("pf-name").value.trim(),
+    category: get("pf-category").value.trim() || "Без категории",
+    supplier: get("pf-supplier").value.trim(),
+    stock: Number(get("pf-stock").value),
+    sold_month: Number(get("pf-sold-month").value),
+    avg_monthly_sales: Number(get("pf-avg").value),
+    purchase_price: Number(get("pf-purchase").value),
+    sale_price: Number(get("pf-sale").value),
+    last_sale_date: get("pf-last-sale").value || null,
+    min_stock: Number(get("pf-min-stock").value),
+    lead_time_days: Number(get("pf-lead-time").value),
+    notes: get("pf-notes").value,
+    do_not_order: get("pf-do-not-order").checked,
+    is_seasonal: get("pf-is-seasonal").checked,
+    is_on_demand: get("pf-is-on-demand").checked,
+  };
+}
+
+function validateProductForm(form) {
+  if (!form.sku) return "Укажите артикул (SKU).";
+  if (!form.name) return "Укажите название товара.";
+  const numbers = {
+    "Остаток": form.stock,
+    "Продано/мес": form.sold_month,
+    "Ср. продажи": form.avg_monthly_sales,
+    "Закупочная цена": form.purchase_price,
+    "Продажная цена": form.sale_price,
+    "Мин. остаток": form.min_stock,
+  };
+  for (const [label, value] of Object.entries(numbers)) {
+    if (Number.isNaN(value) || value < 0) return `Поле «${label}» должно быть числом ≥ 0.`;
+  }
+  if (Number.isNaN(form.lead_time_days) || form.lead_time_days < 1) return "Срок поставки должен быть ≥ 1 дня.";
+  return "";
 }
 
 async function saveProduct(event) {
   event.preventDefault();
+  const isCreate = state.modal.mode === "create";
+  const form = readProductForm();
+  const validationError = validateProductForm(form);
+  if (validationError) {
+    state.modal.error = validationError;
+    render();
+    return;
+  }
+
+  // Capture the risk fields BEFORE render() rebuilds the DOM and resets them.
+  let riskBody = null;
+  const riskStatus = document.getElementById("pf-risk-status");
+  if (!isCreate && riskStatus) {
+    riskBody = {
+      risk_status_override: riskStatus.value,
+      risk_priority: document.getElementById("pf-risk-priority").value || null,
+      risk_note: document.getElementById("pf-risk-note").value,
+      excluded_from_ai: document.getElementById("pf-excluded-ai").checked,
+    };
+  }
+
   state.modal.saving = true;
   state.modal.error = "";
   render();
 
-  const body = {
-    name: document.getElementById("pf-name").value.trim(),
-    category: document.getElementById("pf-category").value.trim(),
-    supplier: document.getElementById("pf-supplier").value.trim(),
-    min_stock: Number(document.getElementById("pf-min-stock").value),
-    lead_time_days: Number(document.getElementById("pf-lead-time").value),
-    notes: document.getElementById("pf-notes").value,
-    do_not_order: document.getElementById("pf-do-not-order").checked,
-    is_seasonal: document.getElementById("pf-is-seasonal").checked,
-    is_on_demand: document.getElementById("pf-is-on-demand").checked,
-  };
-
   try {
-    const response = await api(`/api/products/${state.modal.product.id}`, {
-      method: "PATCH",
-      body: JSON.stringify(body),
-    });
-    const updated = await response.json();
-    // Refresh warehouse row in place
-    const idx = state.warehouse.rows.findIndex((r) => r.id === updated.id);
-    if (idx !== -1) state.warehouse.rows[idx] = updated;
+    if (isCreate) {
+      await api("/api/products", { method: "POST", body: JSON.stringify(form) });
+    } else {
+      await api(`/api/products/${state.modal.product.id}`, { method: "PATCH", body: JSON.stringify(form) });
+      if (riskBody) {
+        await api(`/api/products/${state.modal.product.id}/risk`, { method: "PATCH", body: JSON.stringify(riskBody) });
+      }
+    }
     closeModal();
+    if (state.active === "warehouse") await loadProducts();
+    if (state.active === "risks") await loadRisks();
+    await refreshDashboard();
   } catch (error) {
     state.modal.saving = false;
     state.modal.error = error.message;
@@ -904,6 +1144,434 @@ async function loadProcurement() {
     state.procurement.error = error.message;
   } finally {
     state.procurement.loading = false;
+    render();
+  }
+}
+
+// ─── Risks ────────────────────────────────────────────────────────────────────
+
+function isRiskRow(item) {
+  return item.severity !== "normal" || item.is_manual_risk || item.do_not_order;
+}
+
+function filteredRiskRows() {
+  const { status, priority, mode } = state.risks.filter;
+  return state.risks.rows.filter((item) => {
+    if (status && item.status !== status) return false;
+    if (priority && item.risk_priority !== priority) return false;
+    if (mode === "manual" && !item.is_manual_risk) return false;
+    if (mode === "auto" && item.is_manual_risk) return false;
+    return true;
+  });
+}
+
+function risksTemplate() {
+  const model = state.risks;
+  const rows = filteredRiskRows();
+  const canEdit = ["admin", "manager"].includes(state.user.role);
+  const statuses = ["Срочно заказать", "Нет в наличии", "Сделать скидку", "Мертвый груз", "Растущий спрос", "Норма"];
+
+  return `
+    <section class="screen">
+      <header class="screen-header">
+        <div>
+          <span class="eyebrow">управление рисками</span>
+          <h2>Риски</h2>
+        </div>
+        <div class="toolbar">
+          <select id="risk-filter-status">
+            <option value="">Все статусы</option>
+            ${statuses.map((s) => `<option value="${escapeHtml(s)}" ${model.filter.status === s ? "selected" : ""}>${escapeHtml(s)}</option>`).join("")}
+          </select>
+          <select id="risk-filter-priority">
+            <option value="">Все приоритеты</option>
+            ${["critical", "high", "medium", "low"].map((pr) => `<option value="${pr}" ${model.filter.priority === pr ? "selected" : ""}>${escapeHtml(PRIORITY_LABELS[pr])}</option>`).join("")}
+          </select>
+          <select id="risk-filter-mode">
+            <option value="">Все источники</option>
+            <option value="manual" ${model.filter.mode === "manual" ? "selected" : ""}>Ручные</option>
+            <option value="auto" ${model.filter.mode === "auto" ? "selected" : ""}>Авто</option>
+          </select>
+          ${button("Обновить", "button-secondary", 'type="button" id="risks-refresh"')}
+        </div>
+      </header>
+
+      ${model.error ? `<div class="error-box" style="margin-bottom:14px">${escapeHtml(model.error)}</div>` : ""}
+      ${model.message ? `<div class="notice-box" style="margin-bottom:14px">${escapeHtml(model.message)}</div>` : ""}
+
+      <section class="panel">
+        ${
+          model.loading
+            ? `<div class="empty-state">Загружаю риски...</div>`
+            : rows.length
+              ? `
+              <table class="data-table risks-table">
+                <thead>
+                  <tr>
+                    <th>Товар</th>
+                    <th>Статус</th>
+                    <th>Приоритет</th>
+                    <th>Источник</th>
+                    <th>Рекомендация</th>
+                    ${canEdit ? "<th>Действия</th>" : ""}
+                  </tr>
+                </thead>
+                <tbody>
+                  ${rows
+                    .map(
+                      (item) => `
+                      <tr>
+                        <td>
+                          <strong>${escapeHtml(item.name)}</strong>
+                          <span>${escapeHtml(item.sku)} · ${escapeHtml(item.category)}</span>
+                          ${item.do_not_order ? `<span class="product-flag flag-no-order">не закупать</span>` : ""}
+                          ${item.excluded_from_ai ? `<span class="product-flag flag-no-order">скрыт из AI</span>` : ""}
+                        </td>
+                        <td>${statusPill(item.status, item.severity)}</td>
+                        <td><span class="priority-tag priority-${escapeHtml(item.risk_priority)}">${escapeHtml(PRIORITY_LABELS[item.risk_priority] || item.risk_priority)}</span></td>
+                        <td>${item.is_manual_risk ? `<span class="manual-tag">ручной</span>` : `<span style="color:var(--muted)">авто</span>`}</td>
+                        <td class="risk-reco">${escapeHtml(item.recommendation)}</td>
+                        ${
+                          canEdit
+                            ? `<td class="row-actions">
+                                <button class="btn-mini btn-risk-order" data-id="${item.id}" title="В план закупок">Заказать</button>
+                                <button class="btn-mini btn-risk-exclude" data-id="${item.id}" title="Скрыть из AI-рекомендаций">${item.excluded_from_ai ? "Вернуть в AI" : "Скрыть из AI"}</button>
+                                <button class="btn-mini btn-risk-resolve" data-id="${item.id}" title="Отметить как решённый">Решено</button>
+                                <button class="btn-mini btn-risk-edit" data-id="${item.id}" title="Редактировать риск">✏️</button>
+                              </td>`
+                            : ""
+                        }
+                      </tr>
+                    `,
+                    )
+                    .join("")}
+                </tbody>
+              </table>
+            `
+              : `<div class="empty-state">Нет товаров с рисками по выбранным фильтрам.</div>`
+        }
+      </section>
+    </section>
+  `;
+}
+
+function bindRisks() {
+  const apply = (key) => (e) => {
+    state.risks.filter[key] = e.target.value;
+    render();
+  };
+  document.getElementById("risk-filter-status")?.addEventListener("change", apply("status"));
+  document.getElementById("risk-filter-priority")?.addEventListener("change", apply("priority"));
+  document.getElementById("risk-filter-mode")?.addEventListener("change", apply("mode"));
+  document.getElementById("risks-refresh")?.addEventListener("click", loadRisks);
+
+  document.querySelectorAll(".btn-risk-edit").forEach((btn) => {
+    btn.addEventListener("click", () => openRiskModal(Number(btn.dataset.id)));
+  });
+  document.querySelectorAll(".btn-risk-order").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      state.active = "procurement";
+      render();
+      await loadProcurement();
+    });
+  });
+  document.querySelectorAll(".btn-risk-exclude").forEach((btn) => {
+    btn.addEventListener("click", () => toggleExcludeFromAi(Number(btn.dataset.id)));
+  });
+  document.querySelectorAll(".btn-risk-resolve").forEach((btn) => {
+    btn.addEventListener("click", () => resolveRisk(Number(btn.dataset.id)));
+  });
+}
+
+async function loadRisks() {
+  state.risks.loading = true;
+  state.risks.error = "";
+  render();
+  try {
+    const response = await api("/api/products");
+    const all = await response.json();
+    state.risks.rows = all.filter(isRiskRow);
+  } catch (error) {
+    state.risks.error = error.message;
+  } finally {
+    state.risks.loading = false;
+    render();
+  }
+}
+
+function findRiskRow(id) {
+  return state.risks.rows.find((r) => r.id === id);
+}
+
+async function patchRisk(productId, body, successMessage) {
+  try {
+    const response = await api(`/api/products/${productId}/risk`, { method: "PATCH", body: JSON.stringify(body) });
+    const updated = await response.json();
+    const idx = state.risks.rows.findIndex((r) => r.id === productId);
+    if (idx !== -1) {
+      if (isRiskRow(updated)) state.risks.rows[idx] = updated;
+      else state.risks.rows.splice(idx, 1);
+    }
+    state.risks.message = successMessage || "";
+    render();
+    await refreshDashboard();
+  } catch (error) {
+    state.risks.error = error.message;
+    render();
+  }
+}
+
+async function toggleExcludeFromAi(productId) {
+  const row = findRiskRow(productId);
+  if (!row) return;
+  const next = !row.excluded_from_ai;
+  await patchRisk(productId, { excluded_from_ai: next }, next ? "Товар скрыт из AI-рекомендаций." : "Товар возвращён в AI-рекомендации.");
+}
+
+async function resolveRisk(productId) {
+  await patchRisk(
+    productId,
+    { risk_status_override: "ok", risk_resolved_at: new Date().toISOString() },
+    "Риск отмечен как решённый.",
+  );
+}
+
+// ─── Risk mini-modal ──────────────────────────────────────────────────────────
+
+async function openRiskModal(productId) {
+  let product = findRiskRow(productId);
+  try {
+    if (!product) {
+      const response = await api(`/api/products/${productId}`);
+      product = await response.json();
+    }
+    state.riskModal = { open: true, product, saving: false, error: "" };
+    render();
+  } catch (error) {
+    state.risks.error = error.message;
+    render();
+  }
+}
+
+function closeRiskModal() {
+  state.riskModal = { open: false, product: null, saving: false, error: "" };
+  render();
+}
+
+function riskModalTemplate() {
+  const p = state.riskModal.product;
+  if (!p) return "";
+  return `
+    <div class="modal-overlay" id="risk-modal-overlay">
+      <div class="modal-panel modal-panel-small" role="dialog" aria-modal="true">
+        <div class="modal-header">
+          <div>
+            <span class="eyebrow">риск товара</span>
+            <h3>${escapeHtml(p.name)}</h3>
+            <small style="color:var(--muted)">${escapeHtml(p.sku)}</small>
+          </div>
+          <button class="modal-close" id="risk-modal-close">✕</button>
+        </div>
+
+        ${state.riskModal.error ? `<div class="error-box" style="margin-bottom:14px">${escapeHtml(state.riskModal.error)}</div>` : ""}
+
+        <form id="risk-form" class="product-form">
+          <div class="form-grid-2">
+            <label class="form-label">
+              <span>Статус (переопределение)</span>
+              <select id="rf-status">
+                ${RISK_STATUS_OPTIONS.map((o) => `<option value="${o.code}" ${(p.risk_status_override || "") === o.code ? "selected" : ""}>${escapeHtml(o.label)}</option>`).join("")}
+              </select>
+            </label>
+            <label class="form-label">
+              <span>Приоритет</span>
+              <select id="rf-priority">
+                <option value="">— авто —</option>
+                ${["critical", "high", "medium", "low"].map((pr) => `<option value="${pr}" ${p.risk_priority === pr ? "selected" : ""}>${escapeHtml(PRIORITY_LABELS[pr])}</option>`).join("")}
+              </select>
+            </label>
+          </div>
+          <label class="form-label">
+            <span>Заметка по риску</span>
+            <textarea id="rf-note" rows="3" class="form-textarea">${escapeHtml(p.risk_note || "")}</textarea>
+          </label>
+          <div class="flag-group">
+            <label class="flag-check">
+              <input type="checkbox" id="rf-excluded" ${p.excluded_from_ai ? "checked" : ""} />
+              <span>Исключить из AI</span>
+            </label>
+            <label class="flag-check">
+              <input type="checkbox" id="rf-do-not-order" ${p.do_not_order ? "checked" : ""} />
+              <span>Не закупать</span>
+            </label>
+          </div>
+          <div class="modal-actions">
+            <div class="modal-actions-right">
+              <button type="button" class="button button-ghost" id="risk-modal-cancel">Отмена</button>
+              ${button(state.riskModal.saving ? "Сохраняю..." : "Сохранить", "", `type="submit" ${state.riskModal.saving ? "disabled" : ""}`)}
+            </div>
+          </div>
+        </form>
+      </div>
+    </div>
+  `;
+}
+
+function bindRiskModal() {
+  document.getElementById("risk-modal-overlay").addEventListener("click", (e) => {
+    if (e.target.id === "risk-modal-overlay") closeRiskModal();
+  });
+  document.getElementById("risk-modal-close").addEventListener("click", closeRiskModal);
+  document.getElementById("risk-modal-cancel").addEventListener("click", closeRiskModal);
+  document.getElementById("risk-form").addEventListener("submit", saveRiskModal);
+
+  const onKey = (e) => {
+    if (e.key === "Escape") {
+      closeRiskModal();
+      document.removeEventListener("keydown", onKey);
+    }
+  };
+  document.addEventListener("keydown", onKey);
+}
+
+async function saveRiskModal(event) {
+  event.preventDefault();
+  const productId = state.riskModal.product.id;
+
+  // Read the form BEFORE re-rendering — render() rebuilds the DOM and would
+  // reset the inputs to the saved product values, losing the user's edits.
+  const body = {
+    risk_status_override: document.getElementById("rf-status").value,
+    risk_priority: document.getElementById("rf-priority").value || null,
+    risk_note: document.getElementById("rf-note").value,
+    excluded_from_ai: document.getElementById("rf-excluded").checked,
+    do_not_order: document.getElementById("rf-do-not-order").checked,
+  };
+
+  state.riskModal.saving = true;
+  state.riskModal.error = "";
+  render();
+
+  try {
+    const response = await api(`/api/products/${productId}/risk`, { method: "PATCH", body: JSON.stringify(body) });
+    const updated = await response.json();
+    const idx = state.risks.rows.findIndex((r) => r.id === productId);
+    if (idx !== -1) {
+      if (isRiskRow(updated)) state.risks.rows[idx] = updated;
+      else state.risks.rows.splice(idx, 1);
+    }
+    closeRiskModal();
+    await refreshDashboard();
+  } catch (error) {
+    state.riskModal.saving = false;
+    state.riskModal.error = error.message;
+    render();
+  }
+}
+
+// ─── AI Chat ──────────────────────────────────────────────────────────────────
+
+const CHAT_QUICK_QUESTIONS = [
+  "Что заказать?",
+  "Что распродать?",
+  "План на неделю",
+  "Риски склада",
+  "Заказ на 100 000 ₽",
+];
+
+function chatTemplate() {
+  const model = state.chat;
+  return `
+    <section class="screen chat-screen">
+      <header class="screen-header">
+        <div>
+          <span class="eyebrow">ассистент склада</span>
+          <h2>AI-советник</h2>
+        </div>
+      </header>
+
+      <section class="panel chat-panel">
+        <div class="chat-messages" id="chat-messages">
+          ${
+            model.messages.length
+              ? model.messages
+                  .map(
+                    (m) => `
+                    <div class="chat-msg chat-msg-${m.role}">
+                      <div class="chat-bubble">${chatBubbleContent(m)}</div>
+                    </div>
+                  `,
+                  )
+                  .join("")
+              : `<div class="chat-empty">Задайте вопрос о складе, закупках или рисках — например «Что заказать на этой неделе?»</div>`
+          }
+          ${model.loading ? `<div class="chat-msg chat-msg-assistant"><div class="chat-bubble chat-typing"><span></span><span></span><span></span></div></div>` : ""}
+        </div>
+
+        ${model.error ? `<div class="error-box" style="margin:12px 0">${escapeHtml(model.error)}</div>` : ""}
+
+        <div class="chat-quick">
+          ${CHAT_QUICK_QUESTIONS.map((q) => `<button class="chat-chip" data-q="${escapeHtml(q)}">${escapeHtml(q)}</button>`).join("")}
+        </div>
+
+        <form id="chat-form" class="chat-input-row">
+          <textarea id="chat-input" rows="1" placeholder="Спросите AI-советника..." ${model.loading ? "disabled" : ""}></textarea>
+          ${button(model.loading ? "..." : "Отправить", "", `type="submit" ${model.loading ? "disabled" : ""}`)}
+        </form>
+      </section>
+    </section>
+  `;
+}
+
+function chatBubbleContent(message) {
+  const text = escapeHtml(message.text).replaceAll("\n", "<br>");
+  let actions = "";
+  if (message.role === "assistant" && message.suggested_actions?.length) {
+    actions = `<div class="chat-actions">${message.suggested_actions.map((a) => `<span class="chat-action-tag">${escapeHtml(a)}</span>`).join("")}</div>`;
+  }
+  return text + actions;
+}
+
+function bindChat() {
+  const form = document.getElementById("chat-form");
+  form.addEventListener("submit", (e) => {
+    e.preventDefault();
+    const input = document.getElementById("chat-input");
+    sendChat(input.value);
+  });
+  document.querySelectorAll(".chat-chip").forEach((chip) => {
+    chip.addEventListener("click", () => sendChat(chip.dataset.q));
+  });
+
+  const messagesEl = document.getElementById("chat-messages");
+  if (messagesEl) messagesEl.scrollTop = messagesEl.scrollHeight;
+
+  const input = document.getElementById("chat-input");
+  if (input && !state.chat.loading) input.focus();
+}
+
+async function sendChat(rawMessage) {
+  const message = (rawMessage || "").trim();
+  if (!message || state.chat.loading) return;
+
+  state.chat.messages.push({ role: "user", text: message });
+  state.chat.loading = true;
+  state.chat.error = "";
+  render();
+
+  try {
+    const response = await api("/api/ai/chat", { method: "POST", body: JSON.stringify({ message }) });
+    const data = await response.json();
+    state.chat.messages.push({
+      role: "assistant",
+      text: data.answer,
+      suggested_actions: data.suggested_actions || [],
+      used_products: data.used_products || [],
+    });
+  } catch (error) {
+    state.chat.error = error.message;
+  } finally {
+    state.chat.loading = false;
     render();
   }
 }
