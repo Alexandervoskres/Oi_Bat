@@ -9,9 +9,9 @@ from sqlalchemy.orm import Session
 
 from ..database import get_db
 from ..models import ImportBatch, User, UserRole
-from ..schemas import ImportBatchOut, UploadResponse
+from ..schemas import ImportBatchOut, ImportPreview, UploadResponse
 from ..security import require_roles
-from ..services.excel_import import import_products_from_excel
+from ..services.excel_import import import_products_from_excel, preview_excel_import
 
 
 router = APIRouter(prefix="/api/imports", tags=["imports"])
@@ -23,6 +23,20 @@ def list_imports(
     db: Session = Depends(get_db),
 ):
     return db.query(ImportBatch).order_by(ImportBatch.created_at.desc()).all()
+
+
+@router.post("/preview", response_model=ImportPreview)
+async def preview_import(
+    file: UploadFile = File(...),
+    user: User = Depends(require_roles(UserRole.admin, UserRole.manager)),
+    db: Session = Depends(get_db),
+):
+    if not file.filename or not file.filename.lower().endswith((".xlsx", ".xls")):
+        raise HTTPException(status_code=400, detail="Загрузите Excel-файл .xlsx или .xls")
+    try:
+        return preview_excel_import(db, file.file, file.filename)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.post("/upload", response_model=UploadResponse)

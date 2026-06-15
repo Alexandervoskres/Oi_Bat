@@ -598,6 +598,318 @@ nav {
   color: var(--muted);
 }
 
+/* ── Product flags ─────────────────────────────────────────────────────────── */
+
+.product-flag {
+  display: inline-block;
+  margin-top: 4px;
+  margin-right: 4px;
+  padding: 1px 6px;
+  font-size: 11px;
+  font-weight: 700;
+  border-radius: 2px;
+}
+
+.flag-no-order {
+  background: rgba(255, 92, 71, 0.2);
+  color: var(--danger);
+  border: 1px solid rgba(255, 92, 71, 0.4);
+}
+
+.flag-seasonal {
+  background: rgba(245, 158, 11, 0.15);
+  color: var(--orange);
+  border: 1px solid rgba(245, 158, 11, 0.35);
+}
+
+.flag-on-demand {
+  background: rgba(97, 181, 255, 0.15);
+  color: var(--blue);
+  border: 1px solid rgba(97, 181, 255, 0.35);
+}
+
+.btn-edit-product {
+  border: 0;
+  background: transparent;
+  font-size: 16px;
+  cursor: pointer;
+  opacity: 0.55;
+  padding: 4px 8px;
+}
+
+.btn-edit-product:hover {
+  opacity: 1;
+}
+
+/* ── Modal ─────────────────────────────────────────────────────────────────── */
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.65);
+  display: grid;
+  place-items: center;
+  z-index: 100;
+  padding: 24px;
+}
+
+.modal-panel {
+  background: #182230;
+  border: 1px solid var(--line);
+  width: 100%;
+  max-width: 680px;
+  max-height: calc(100vh - 48px);
+  overflow-y: auto;
+  padding: 24px;
+  box-shadow: 0 32px 80px rgba(0, 0, 0, 0.55);
+}
+
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 18px;
+  margin-bottom: 20px;
+}
+
+.modal-header h3 {
+  margin: 4px 0 2px;
+  font-size: 22px;
+}
+
+.modal-close {
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 18px;
+  cursor: pointer;
+  padding: 4px 8px;
+  flex-shrink: 0;
+}
+
+.modal-close:hover {
+  color: var(--text);
+}
+
+.product-form {
+  display: grid;
+  gap: 16px;
+}
+
+.form-grid-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+
+.form-label {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.form-label input,
+.form-label textarea {
+  font-size: 15px;
+}
+
+.flag-group {
+  display: flex;
+  gap: 20px;
+  flex-wrap: wrap;
+}
+
+.flag-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.flag-check input[type="checkbox"] {
+  width: 16px;
+  min-height: 16px;
+  accent-color: var(--yellow);
+}
+
+.modal-info-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+  padding: 14px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+}
+
+.modal-info-grid div {
+  display: grid;
+  gap: 4px;
+}
+
+.modal-info-grid span {
+  font-size: 11px;
+  color: var(--muted);
+  text-transform: uppercase;
+}
+
+.modal-info-grid strong {
+  font-size: 18px;
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+}
+
+.button-ghost {
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--muted);
+}
+
+.button-ghost:hover {
+  border-color: var(--yellow);
+  color: var(--text);
+}
+
+.button-secondary {
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  color: var(--text);
+}
+
+.button-secondary:hover {
+  border-color: var(--yellow);
+}
+
+/* ── Procurement ───────────────────────────────────────────────────────────── */
+
+.procurement-summary {
+  display: flex;
+  gap: 40px;
+}
+
+.procurement-summary div {
+  display: grid;
+  gap: 4px;
+}
+
+.procurement-summary span {
+  font-size: 12px;
+  color: var(--muted);
+  text-transform: uppercase;
+}
+
+.procurement-summary strong {
+  font-size: 22px;
+}
+
+/* ── Import preview ────────────────────────────────────────────────────────── */
+
+.preview-panel {
+  margin-bottom: 14px;
+}
+
+.preview-stats {
+  display: flex;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.preview-stat {
+  flex: 1;
+  padding: 12px 14px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  display: grid;
+  gap: 4px;
+}
+
+.preview-stat span {
+  font-size: 12px;
+  color: var(--muted);
+  text-transform: uppercase;
+}
+
+.preview-stat strong {
+  font-size: 22px;
+}
+
+.preview-stat-new {
+  border-color: rgba(65, 209, 125, 0.4);
+}
+
+.preview-stat-new strong {
+  color: var(--green);
+}
+
+.preview-stat-update strong {
+  color: var(--yellow);
+}
+
+.preview-stat-error {
+  border-color: rgba(255, 92, 71, 0.4);
+}
+
+.preview-stat-error strong {
+  color: var(--danger);
+}
+
+.preview-cols {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.preview-cols > div {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.col-tag {
+  display: inline-block;
+  padding: 2px 8px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.col-found {
+  background: rgba(65, 209, 125, 0.15);
+  color: var(--green);
+  border: 1px solid rgba(65, 209, 125, 0.3);
+}
+
+.col-missing {
+  background: rgba(168, 179, 196, 0.1);
+  color: var(--muted);
+  border: 1px solid var(--line);
+}
+
+.preview-warnings {
+  padding: 10px 12px;
+  background: rgba(245, 158, 11, 0.08);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  color: var(--orange);
+  font-size: 13px;
+  display: grid;
+  gap: 4px;
+  margin-bottom: 4px;
+}
+
+.preview-row-error td {
+  opacity: 0.6;
+}
+
+.upload-buttons {
+  display: grid;
+  gap: 8px;
+}
+
 @media (max-width: 1100px) {
   .app-shell {
     grid-template-columns: 1fr;

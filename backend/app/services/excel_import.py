@@ -123,6 +123,83 @@ def _slug_sku(name: str, index: int) -> str:
     return (raw[:40] or f"ITEM-{index}") + f"-{index:03d}"
 
 
+def preview_excel_import(db: Session, file: BinaryIO, filename: str) -> dict:
+    """Parse the Excel file and return a preview without writing to the database."""
+    suffix = Path(filename).suffix or ".xlsx"
+    with NamedTemporaryFile(delete=False, suffix=suffix) as temp:
+        temp.write(file.read())
+        temp_path = Path(temp.name)
+
+    try:
+        try:
+            frame = pd.read_excel(temp_path)
+        except Exception as exc:
+            raise ValueError("Не удалось прочитать Excel-файл. Проверьте формат и структуру файла.") from exc
+    finally:
+        temp_path.unlink(missing_ok=True)
+
+    if frame.empty:
+        raise ValueError("Excel-файл пустой")
+
+    columns = _find_columns(list(frame.columns))
+    columns_found = list(columns.keys())
+    columns_missing = [key for key in COLUMN_ALIASES if key not in columns]
+
+    warnings: list[str] = []
+    preview_rows = []
+    new_count = 0
+    update_count = 0
+    error_count = 0
+
+    for index, row in frame.iterrows():
+        row_number = int(index) + 2
+        name = _clean_text(row[columns["name"]]) if "name" in columns else ""
+        if not name:
+            error_count += 1
+            preview_rows.append(
+                {
+                    "row_number": row_number,
+                    "sku": "",
+                    "name": "(пусто)",
+                    "action": "error",
+                    "error": "Пустое название",
+                }
+            )
+            continue
+
+        sku = _clean_text(row[columns["sku"]]) if "sku" in columns else ""
+        if not sku:
+            sku = _slug_sku(name, index + 1)
+
+        existing = db.query(Product).filter(Product.sku == sku).first()
+        action = "update" if existing else "create"
+        if existing:
+            update_count += 1
+        else:
+            new_count += 1
+
+        preview_rows.append(
+            {
+                "row_number": row_number,
+                "sku": sku,
+                "name": name,
+                "action": action,
+                "error": None,
+            }
+        )
+
+    return {
+        "columns_found": columns_found,
+        "columns_missing": columns_missing,
+        "total_rows": len(frame),
+        "new_count": new_count,
+        "update_count": update_count,
+        "error_count": error_count,
+        "warnings": warnings,
+        "preview_rows": preview_rows[:50],
+    }
+
+
 def import_products_from_excel(db: Session, file: BinaryIO, filename: str, user: User) -> dict:
     suffix = Path(filename).suffix or ".xlsx"
     with NamedTemporaryFile(delete=False, suffix=suffix) as temp:

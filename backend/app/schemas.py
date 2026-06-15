@@ -90,3 +90,34 @@ class UploadResponse(BaseModel):
     updated: int
     created: int
     warnings: list[str]
+
+
+class ProductUpdate(BaseModel):
+    name: str | None = None
+    category: str | None = None
+    supplier: str | None = None
+    min_stock: int | None = None
+    lead_time_days: int | None = None
+    notes: str | None = None
+    do_not_order: bool | None = None
+    is_seasonal: bool | None = None
+    is_on_demand: bool | None = None
+
+
+class ImportPreviewRow(BaseModel):
+    row_number: int
+    sku: str
+    name: str
+    action: str
+    error: str | None = None
+
+
+class ImportPreview(BaseModel):
+    columns_found: list[str]
+    columns_missing: list[str]
+    total_rows: int
+    new_count: int
+    update_count: int
+    error_count: int
+    warnings: list[str]
+    preview_rows: list[ImportPreviewRow]

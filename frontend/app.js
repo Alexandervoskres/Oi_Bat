@@ -9,6 +9,7 @@ const ROLE_LABELS = {
 const NAV_ITEMS = [
   { id: "dashboard", label: "Дашборд", adminOnly: false },
   { id: "warehouse", label: "Склад", adminOnly: false },
+  { id: "procurement", label: "Закупки", adminOnly: false },
   { id: "imports", label: "Excel и история", adminOnly: false },
   { id: "reports", label: "Отчеты", adminOnly: false },
   { id: "users", label: "Пользователи", adminOnly: true },
@@ -28,11 +29,18 @@ const state = {
     loading: false,
     error: "",
   },
+  procurement: {
+    rows: [],
+    loading: false,
+    error: "",
+  },
   imports: {
     rows: [],
     file: null,
     message: "",
     loading: false,
+    preview: null,
+    previewing: false,
   },
   users: {
     rows: [],
@@ -43,6 +51,12 @@ const state = {
       password: "",
       role: "manager",
     },
+  },
+  modal: {
+    open: false,
+    product: null,
+    saving: false,
+    error: "",
   },
 };
 
@@ -134,6 +148,11 @@ function render() {
   root.innerHTML = appTemplate();
   bindShell();
 
+  if (state.modal.open) {
+    bindModal();
+    return;
+  }
+
   if (!state.dashboard) {
     refreshDashboard();
     return;
@@ -211,6 +230,7 @@ function appTemplate() {
         ${state.error ? `<div class="error-box global-error">${escapeHtml(state.error)}</div>` : ""}
         ${activeTemplate()}
       </main>
+      ${state.modal.open ? modalTemplate() : ""}
     </div>
   `;
 }
@@ -252,6 +272,7 @@ function bindShell() {
       state.active = buttonEl.dataset.nav;
       render();
       if (state.active === "warehouse" && !state.warehouse.rows.length) await loadProducts();
+      if (state.active === "procurement") await loadProcurement();
       if (state.active === "imports" && !state.imports.rows.length) await loadImports();
       if (state.active === "users" && !state.users.rows.length) await loadUsers();
     });
@@ -265,6 +286,7 @@ function activeTemplate() {
   }
   if (state.active === "dashboard") return dashboardTemplate();
   if (state.active === "warehouse") return warehouseTemplate();
+  if (state.active === "procurement") return procurementTemplate();
   if (state.active === "imports") return importsTemplate();
   if (state.active === "reports") return reportsTemplate();
   if (state.active === "users" && state.user.role === "admin") return usersTemplate();
@@ -274,6 +296,7 @@ function activeTemplate() {
 function bindActiveScreen() {
   if (state.active === "dashboard") bindDashboard();
   if (state.active === "warehouse") bindWarehouse();
+  if (state.active === "procurement") bindProcurement();
   if (state.active === "imports") bindImports();
   if (state.active === "reports") bindReports();
   if (state.active === "users" && state.user.role === "admin") bindUsers();
@@ -441,9 +464,12 @@ function forecastTable(rows) {
   `;
 }
 
+// ─── Warehouse ────────────────────────────────────────────────────────────────
+
 function warehouseTemplate() {
   const model = state.warehouse;
   const statuses = ["", "Срочно заказать", "Нет в наличии", "Сделать скидку", "Мертвый груз", "Растущий спрос", "Норма"];
+  const canEdit = ["admin", "manager"].includes(state.user.role);
   return `
     <section class="screen">
       <header class="screen-header">
@@ -479,6 +505,7 @@ function warehouseTemplate() {
                     <th>Маржа</th>
                     <th>Последняя продажа</th>
                     <th>AI-статус</th>
+                    ${canEdit ? "<th></th>" : ""}
                   </tr>
                 </thead>
                 <tbody>
@@ -491,6 +518,9 @@ function warehouseTemplate() {
                                 <td>
                                   <strong>${escapeHtml(item.name)}</strong>
                                   <span>${escapeHtml(item.sku)}</span>
+                                  ${item.do_not_order ? `<span class="product-flag flag-no-order">не закупать</span>` : ""}
+                                  ${item.is_seasonal ? `<span class="product-flag flag-seasonal">сезонный</span>` : ""}
+                                  ${item.is_on_demand ? `<span class="product-flag flag-on-demand">под заказ</span>` : ""}
                                 </td>
                                 <td>${escapeHtml(item.category)}</td>
                                 <td>${escapeHtml(item.stock)} шт.</td>
@@ -498,11 +528,12 @@ function warehouseTemplate() {
                                 <td>${escapeHtml(item.margin_percent)}%</td>
                                 <td>${escapeHtml(formatDate(item.last_sale_date))}</td>
                                 <td>${statusPill(item.status, item.severity)}</td>
+                                ${canEdit ? `<td><button class="btn-edit-product" data-id="${item.id}" title="Редактировать">✏️</button></td>` : ""}
                               </tr>
                             `,
                           )
                           .join("")
-                      : `<tr><td colspan="7">Товаров пока нет.</td></tr>`
+                      : `<tr><td colspan="${canEdit ? 8 : 7}">Товаров пока нет.</td></tr>`
                   }
                 </tbody>
               </table>
@@ -518,6 +549,9 @@ function bindWarehouse() {
   document.getElementById("warehouse-status").addEventListener("change", loadProducts);
   document.getElementById("warehouse-search").addEventListener("keydown", (event) => {
     if (event.key === "Enter") loadProducts();
+  });
+  document.querySelectorAll(".btn-edit-product").forEach((btn) => {
+    btn.addEventListener("click", () => openProductModal(Number(btn.dataset.id)));
   });
 }
 
@@ -543,9 +577,261 @@ async function loadProducts() {
   }
 }
 
+// ─── Product Modal ────────────────────────────────────────────────────────────
+
+async function openProductModal(productId) {
+  try {
+    const response = await api(`/api/products/${productId}`);
+    const product = await response.json();
+    state.modal = {
+      open: true,
+      product,
+      saving: false,
+      error: "",
+    };
+    render();
+  } catch (error) {
+    state.warehouse.error = error.message;
+    render();
+  }
+}
+
+function closeModal() {
+  state.modal = { open: false, product: null, saving: false, error: "" };
+  render();
+}
+
+function modalTemplate() {
+  const p = state.modal.product;
+  if (!p) return "";
+  return `
+    <div class="modal-overlay" id="modal-overlay">
+      <div class="modal-panel" role="dialog" aria-modal="true">
+        <div class="modal-header">
+          <div>
+            <span class="eyebrow">карточка товара</span>
+            <h3>${escapeHtml(p.name)}</h3>
+            <small style="color:var(--muted)">${escapeHtml(p.sku)}</small>
+          </div>
+          <button class="modal-close" id="modal-close">✕</button>
+        </div>
+
+        ${state.modal.error ? `<div class="error-box" style="margin-bottom:14px">${escapeHtml(state.modal.error)}</div>` : ""}
+
+        <form id="product-edit-form" class="product-form">
+          <div class="form-grid-2">
+            <label class="form-label">
+              <span>Название</span>
+              <input id="pf-name" value="${escapeHtml(p.name)}" />
+            </label>
+            <label class="form-label">
+              <span>Категория</span>
+              <input id="pf-category" value="${escapeHtml(p.category)}" />
+            </label>
+            <label class="form-label">
+              <span>Поставщик</span>
+              <input id="pf-supplier" value="${escapeHtml(p.supplier)}" />
+            </label>
+            <div class="form-grid-2">
+              <label class="form-label">
+                <span>Мин. остаток</span>
+                <input id="pf-min-stock" type="number" min="0" value="${escapeHtml(p.min_stock)}" />
+              </label>
+              <label class="form-label">
+                <span>Срок поставки (дн.)</span>
+                <input id="pf-lead-time" type="number" min="1" value="${escapeHtml(p.lead_time_days)}" />
+              </label>
+            </div>
+          </div>
+
+          <label class="form-label">
+            <span>Комментарий менеджера</span>
+            <textarea id="pf-notes" rows="3" style="width:100%;background:#0f172a;border:1px solid var(--line);color:var(--text);padding:10px;font:inherit;resize:vertical">${escapeHtml(p.notes)}</textarea>
+          </label>
+
+          <div class="flag-group">
+            <label class="flag-check">
+              <input type="checkbox" id="pf-do-not-order" ${p.do_not_order ? "checked" : ""} />
+              <span>Не закупать</span>
+            </label>
+            <label class="flag-check">
+              <input type="checkbox" id="pf-is-seasonal" ${p.is_seasonal ? "checked" : ""} />
+              <span>Сезонный</span>
+            </label>
+            <label class="flag-check">
+              <input type="checkbox" id="pf-is-on-demand" ${p.is_on_demand ? "checked" : ""} />
+              <span>Под заказ</span>
+            </label>
+          </div>
+
+          <div class="modal-info-grid">
+            <div><span>Остаток</span><strong>${escapeHtml(p.stock)} шт.</strong></div>
+            <div><span>Продано/мес</span><strong>${escapeHtml(p.sold_month)} шт.</strong></div>
+            <div><span>Маржа</span><strong>${escapeHtml(p.margin_percent)}%</strong></div>
+            <div><span>AI-статус</span>${statusPill(p.status, p.severity)}</div>
+          </div>
+
+          <div class="modal-actions">
+            <button type="button" class="button button-ghost" id="modal-cancel">Отмена</button>
+            ${button(state.modal.saving ? "Сохраняю..." : "Сохранить", "", `type="submit" ${state.modal.saving ? "disabled" : ""}`)}
+          </div>
+        </form>
+      </div>
+    </div>
+  `;
+}
+
+function bindModal() {
+  document.getElementById("modal-overlay").addEventListener("click", (e) => {
+    if (e.target.id === "modal-overlay") closeModal();
+  });
+  document.getElementById("modal-close").addEventListener("click", closeModal);
+  document.getElementById("modal-cancel").addEventListener("click", closeModal);
+  document.getElementById("product-edit-form").addEventListener("submit", saveProduct);
+}
+
+async function saveProduct(event) {
+  event.preventDefault();
+  state.modal.saving = true;
+  state.modal.error = "";
+  render();
+
+  const body = {
+    name: document.getElementById("pf-name").value.trim(),
+    category: document.getElementById("pf-category").value.trim(),
+    supplier: document.getElementById("pf-supplier").value.trim(),
+    min_stock: Number(document.getElementById("pf-min-stock").value),
+    lead_time_days: Number(document.getElementById("pf-lead-time").value),
+    notes: document.getElementById("pf-notes").value,
+    do_not_order: document.getElementById("pf-do-not-order").checked,
+    is_seasonal: document.getElementById("pf-is-seasonal").checked,
+    is_on_demand: document.getElementById("pf-is-on-demand").checked,
+  };
+
+  try {
+    const response = await api(`/api/products/${state.modal.product.id}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    });
+    const updated = await response.json();
+    // Refresh warehouse row in place
+    const idx = state.warehouse.rows.findIndex((r) => r.id === updated.id);
+    if (idx !== -1) state.warehouse.rows[idx] = updated;
+    closeModal();
+  } catch (error) {
+    state.modal.saving = false;
+    state.modal.error = error.message;
+    render();
+  }
+}
+
+// ─── Procurement ──────────────────────────────────────────────────────────────
+
+function procurementTemplate() {
+  const model = state.procurement;
+  const totalCost = model.rows.reduce((sum, r) => sum + r.total_cost, 0);
+  return `
+    <section class="screen">
+      <header class="screen-header">
+        <div>
+          <span class="eyebrow">план заказов</span>
+          <h2>Закупки</h2>
+        </div>
+        ${button("Обновить", "", 'type="button" id="procurement-refresh"')}
+      </header>
+
+      ${model.error ? `<div class="error-box" style="margin-bottom:14px">${escapeHtml(model.error)}</div>` : ""}
+
+      ${
+        model.rows.length
+          ? `
+          <div class="panel" style="margin-bottom:14px">
+            <div class="procurement-summary">
+              <div><span>Позиций к заказу</span><strong>${model.rows.length}</strong></div>
+              <div><span>Сумма закупки</span><strong>${formatMoney(totalCost)}</strong></div>
+              <div><span>Критичных</span><strong>${model.rows.filter((r) => r.severity === "critical").length}</strong></div>
+            </div>
+          </div>
+        `
+          : ""
+      }
+
+      <section class="panel">
+        ${
+          model.loading
+            ? `<div class="empty-state">Строю план закупок...</div>`
+            : model.rows.length
+              ? `
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>Товар</th>
+                    <th>Остаток</th>
+                    <th>Спрос/мес</th>
+                    <th>Поставщик</th>
+                    <th>Срок пост.</th>
+                    <th>Рек. кол-во</th>
+                    <th>Сумма</th>
+                    <th>Приоритет</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${model.rows
+                    .map(
+                      (item) => `
+                      <tr>
+                        <td>
+                          <strong>${escapeHtml(item.name)}</strong>
+                          <span>${escapeHtml(item.category)}</span>
+                          ${item.is_seasonal ? `<span class="product-flag flag-seasonal">сезонный</span>` : ""}
+                          ${item.is_on_demand ? `<span class="product-flag flag-on-demand">под заказ</span>` : ""}
+                        </td>
+                        <td>${escapeHtml(item.stock)} шт.</td>
+                        <td>${escapeHtml(item.avg_monthly_sales)} шт.</td>
+                        <td>${escapeHtml(item.supplier || "—")}</td>
+                        <td>${escapeHtml(item.lead_time_days)} дн.</td>
+                        <td><strong>${escapeHtml(item.recommended_qty)} шт.</strong></td>
+                        <td>${item.purchase_price ? formatMoney(item.total_cost) : "—"}</td>
+                        <td>${statusPill(item.status, item.severity)}</td>
+                      </tr>
+                    `,
+                    )
+                    .join("")}
+                </tbody>
+              </table>
+            `
+              : `<div class="empty-state">Нет позиций, требующих закупки. Загрузите данные из Excel.</div>`
+        }
+      </section>
+    </section>
+  `;
+}
+
+function bindProcurement() {
+  document.getElementById("procurement-refresh")?.addEventListener("click", loadProcurement);
+}
+
+async function loadProcurement() {
+  state.procurement.loading = true;
+  state.procurement.error = "";
+  render();
+  try {
+    const response = await api("/api/procurement");
+    state.procurement.rows = await response.json();
+  } catch (error) {
+    state.procurement.error = error.message;
+  } finally {
+    state.procurement.loading = false;
+    render();
+  }
+}
+
+// ─── Imports ──────────────────────────────────────────────────────────────────
+
 function importsTemplate() {
   const model = state.imports;
   const canUpload = ["admin", "manager"].includes(state.user.role);
+  const hasPreview = !!model.preview;
   return `
     <section class="screen">
       <header class="screen-header">
@@ -563,10 +849,15 @@ function importsTemplate() {
             <span>${canUpload ? "Поддерживаются .xlsx и .xls с колонками из шаблона" : "У вашей роли нет прав на загрузку"}</span>
             <input id="upload-file" type="file" accept=".xlsx,.xls" ${canUpload ? "" : "disabled"} />
           </label>
-          ${button(model.loading ? "Загружаю..." : "Импортировать", "", `type="submit" ${model.file && !model.loading && canUpload ? "" : "disabled"}`)}
+          <div class="upload-buttons">
+            ${button(model.previewing ? "Анализирую..." : "Предпросмотр", "button-secondary", `type="button" id="preview-btn" ${model.file && !model.previewing && !model.loading && canUpload ? "" : "disabled"}`)}
+            ${button(model.loading ? "Загружаю..." : "Импортировать", "", `type="submit" ${model.file && !model.loading && !model.previewing && canUpload ? "" : "disabled"}`)}
+          </div>
         </form>
         ${model.message ? `<div class="notice-box">${escapeHtml(model.message)}</div>` : ""}
       </section>
+
+      ${hasPreview ? importPreviewTemplate(model.preview) : ""}
 
       <section class="panel">
         <div class="panel-title">
@@ -606,13 +897,86 @@ function importsTemplate() {
   `;
 }
 
+function importPreviewTemplate(preview) {
+  const FIELD_LABELS = {
+    sku: "Артикул", name: "Название", category: "Категория", stock: "Остаток",
+    sold_month: "Продажи/мес", avg_monthly_sales: "Ср. продажи", purchase_price: "Закупочная цена",
+    sale_price: "Продажная цена", last_sale_date: "Дата продажи", supplier: "Поставщик",
+    min_stock: "Мин. остаток", lead_time_days: "Срок поставки",
+  };
+  return `
+    <section class="panel preview-panel">
+      <div class="panel-title">
+        <h3>Предпросмотр импорта</h3>
+        <button class="modal-close" id="close-preview" title="Закрыть">✕</button>
+      </div>
+
+      <div class="preview-stats">
+        <div class="preview-stat preview-stat-new"><span>Новых</span><strong>+${preview.new_count}</strong></div>
+        <div class="preview-stat preview-stat-update"><span>Обновится</span><strong>↻ ${preview.update_count}</strong></div>
+        <div class="preview-stat ${preview.error_count ? "preview-stat-error" : ""}"><span>Ошибки</span><strong>${preview.error_count}</strong></div>
+        <div class="preview-stat"><span>Всего строк</span><strong>${preview.total_rows}</strong></div>
+      </div>
+
+      <div class="preview-cols">
+        <div>
+          <strong>Распознаны колонки:</strong>
+          ${preview.columns_found.map((c) => `<span class="col-tag col-found">${escapeHtml(FIELD_LABELS[c] || c)}</span>`).join("")}
+        </div>
+        ${preview.columns_missing.length ? `
+        <div>
+          <strong>Не найдены:</strong>
+          ${preview.columns_missing.map((c) => `<span class="col-tag col-missing">${escapeHtml(FIELD_LABELS[c] || c)}</span>`).join("")}
+        </div>` : ""}
+      </div>
+
+      ${preview.warnings.length ? `
+        <div class="preview-warnings">
+          ${preview.warnings.slice(0, 5).map((w) => `<div>⚠ ${escapeHtml(w)}</div>`).join("")}
+          ${preview.warnings.length > 5 ? `<div>... и ещё ${preview.warnings.length - 5} предупреждений</div>` : ""}
+        </div>
+      ` : ""}
+
+      <table class="data-table" style="margin-top:14px">
+        <thead>
+          <tr><th>#</th><th>Артикул</th><th>Название</th><th>Действие</th></tr>
+        </thead>
+        <tbody>
+          ${preview.preview_rows
+            .map(
+              (row) => `
+              <tr class="${row.action === "error" ? "preview-row-error" : ""}">
+                <td>${escapeHtml(row.row_number)}</td>
+                <td>${escapeHtml(row.sku || "—")}</td>
+                <td>${escapeHtml(row.name)}${row.error ? `<span style="color:var(--danger)"> — ${escapeHtml(row.error)}</span>` : ""}</td>
+                <td>
+                  ${row.action === "create" ? `<span style="color:var(--green)">Создать</span>` : ""}
+                  ${row.action === "update" ? `<span style="color:var(--yellow)">Обновить</span>` : ""}
+                  ${row.action === "error" ? `<span style="color:var(--danger)">Пропустить</span>` : ""}
+                </td>
+              </tr>
+            `,
+            )
+            .join("")}
+        </tbody>
+      </table>
+    </section>
+  `;
+}
+
 function bindImports() {
   document.getElementById("download-template").addEventListener("click", downloadTemplate);
   document.getElementById("upload-file")?.addEventListener("change", (event) => {
     state.imports.file = event.target.files?.[0] || null;
+    state.imports.preview = null;
     render();
   });
+  document.getElementById("preview-btn")?.addEventListener("click", previewImport);
   document.getElementById("upload-form").addEventListener("submit", uploadFile);
+  document.getElementById("close-preview")?.addEventListener("click", () => {
+    state.imports.preview = null;
+    render();
+  });
 }
 
 async function loadImports() {
@@ -623,6 +987,25 @@ async function loadImports() {
     state.imports.message = error.message;
   }
   render();
+}
+
+async function previewImport() {
+  if (!state.imports.file) return;
+  state.imports.previewing = true;
+  state.imports.preview = null;
+  state.imports.message = "";
+  render();
+  try {
+    const body = new FormData();
+    body.append("file", state.imports.file);
+    const response = await api("/api/imports/preview", { method: "POST", body });
+    state.imports.preview = await response.json();
+  } catch (error) {
+    state.imports.message = error.message;
+  } finally {
+    state.imports.previewing = false;
+    render();
+  }
 }
 
 async function uploadFile(event) {
@@ -637,6 +1020,7 @@ async function uploadFile(event) {
     const response = await api("/api/imports/upload", { method: "POST", body });
     const result = await response.json();
     state.imports.file = null;
+    state.imports.preview = null;
     state.imports.message = `Импортировано ${result.imported} строк. Новых: ${result.created}, обновлено: ${result.updated}.`;
     await loadImports();
     await refreshDashboard();
@@ -652,6 +1036,8 @@ async function downloadTemplate() {
   const response = await api("/api/imports/template.xlsx");
   await downloadBlob(response, "skladai-template.xlsx");
 }
+
+// ─── Reports ──────────────────────────────────────────────────────────────────
 
 function reportsTemplate() {
   const metrics = state.dashboard.metrics;
@@ -697,6 +1083,8 @@ async function downloadBlob(response, filename) {
   link.remove();
   URL.revokeObjectURL(url);
 }
+
+// ─── Users ────────────────────────────────────────────────────────────────────
 
 function usersTemplate() {
   const model = state.users;
@@ -795,6 +1183,8 @@ async function createUser(event) {
     render();
   }
 }
+
+// ─── Settings ─────────────────────────────────────────────────────────────────
 
 function settingsTemplate() {
   return `
