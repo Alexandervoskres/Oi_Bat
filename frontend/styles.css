@@ -1,16 +1,16 @@
 :root {
-  --bg: #111827;
-  --panel: #182230;
-  --panel-2: #202c3a;
-  --line: #334155;
-  --text: #f8fafc;
-  --muted: #a8b3c4;
-  --yellow: #67e8f9;
-  --yellow-2: #38bdf8;
-  --orange: #f59e0b;
+  --bg: #12100e;
+  --panel: #1c1814;
+  --panel-2: #231f1a;
+  --line: #3a3228;
+  --text: #f8f4ef;
+  --muted: #b0a898;
+  --yellow: #fbbf24;
+  --yellow-2: #f59e0b;
+  --orange: #f97316;
   --danger: #ff5c47;
   --green: #41d17d;
-  --blue: #61b5ff;
+  --blue: #fb923c;
   --white: #ffffff;
 }
 
@@ -44,8 +44,8 @@ button {
   display: grid;
   place-items: center;
   background:
-    linear-gradient(120deg, rgba(103, 232, 249, 0.16), transparent 42%),
-    linear-gradient(320deg, rgba(245, 158, 11, 0.16), transparent 45%),
+    linear-gradient(120deg, rgba(251, 191, 36, 0.14), transparent 42%),
+    linear-gradient(320deg, rgba(249, 115, 22, 0.14), transparent 45%),
     var(--bg);
 }
 
@@ -53,8 +53,8 @@ button {
   width: 420px;
   padding: 34px;
   border: 1px solid var(--line);
-  background: #172033;
-  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.45);
+  background: #1a1612;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.55);
 }
 
 .brand-mark,
@@ -101,7 +101,7 @@ select {
   min-height: 42px;
   border: 1px solid var(--line);
   color: var(--text);
-  background: #0f172a;
+  background: #0e0c0a;
   padding: 0 12px;
   outline: none;
 }
@@ -148,8 +148,8 @@ select:focus {
 }
 
 .notice-box {
-  border-color: rgba(103, 232, 249, 0.38);
-  background: rgba(103, 232, 249, 0.1);
+  border-color: rgba(251, 191, 36, 0.38);
+  background: rgba(251, 191, 36, 0.08);
   color: var(--text);
 }
 
@@ -166,7 +166,7 @@ select:focus {
 .sidebar {
   min-height: 100vh;
   padding: 22px 16px;
-  background: #0f172a;
+  background: #0e0c0a;
   border-right: 1px solid var(--line);
   display: flex;
   flex-direction: column;
@@ -287,7 +287,7 @@ nav {
   gap: 9px;
   border: 1px solid var(--line);
   padding: 0 12px;
-  background: #0f172a;
+  background: #0e0c0a;
 }
 
 .search-field input {
@@ -465,7 +465,7 @@ nav {
 
 .bar-row div {
   height: 12px;
-  background: #2b3a4f;
+  background: #2a2318;
 }
 
 .bar-row i {
@@ -530,7 +530,7 @@ nav {
 
 .dropzone {
   min-height: 126px;
-  border: 1px dashed rgba(103, 232, 249, 0.55);
+  border: 1px dashed rgba(251, 191, 36, 0.55);
   display: grid;
   place-items: center;
   gap: 6px;
@@ -654,7 +654,7 @@ nav {
 }
 
 .modal-panel {
-  background: #182230;
+  background: #1c1814;
   border: 1px solid var(--line);
   width: 100%;
   max-width: 680px;
@@ -712,6 +712,7 @@ nav {
 .form-label input,
 .form-label textarea {
   font-size: 15px;
+  background: #0e0c0a;
 }
 
 .flag-group {
@@ -908,6 +909,21 @@ nav {
 .upload-buttons {
   display: grid;
   gap: 8px;
+}
+
+/* ── Procurement qty input ─────────────────────────────────────────────────── */
+
+.qty-input {
+  width: 80px;
+  min-height: 34px;
+  text-align: center;
+  font-weight: 700;
+  border-color: rgba(251, 191, 36, 0.35);
+  background: #0e0c0a;
+}
+
+.qty-input:focus {
+  border-color: var(--yellow);
 }
 
 @media (max-width: 1100px) {
