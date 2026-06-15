@@ -18,6 +18,34 @@ STATUS_LABELS = {
     "ok": "Норма",
 }
 
+# Severity assigned when a manager overrides the risk status manually.
+STATUS_SEVERITY = {
+    "out_of_stock": "critical",
+    "order_now": "critical",
+    "dead_stock": "warning",
+    "discount": "notice",
+    "growing": "positive",
+    "ok": "normal",
+}
+
+# Default priority derived from severity when risk_priority is not set manually.
+SEVERITY_PRIORITY = {
+    "critical": "critical",
+    "warning": "high",
+    "notice": "medium",
+    "positive": "low",
+    "normal": "low",
+}
+
+STATUS_ACTION = {
+    "out_of_stock": "Срочно заказать",
+    "order_now": "Заказать",
+    "dead_stock": "Сделать распродажу",
+    "discount": "Скидка 10-15%",
+    "growing": "Усилить закупку",
+    "ok": "Следить по плану",
+}
+
 
 def margin_percent(product: Product) -> float:
     if not product.sale_price:
@@ -93,6 +121,21 @@ def product_signal(product: Product, today: date | None = None) -> dict:
     else:
         recommendation = f"{product.name}: показатели в норме, достаточно регулярного контроля."
 
+    is_manual_risk = False
+    override = getattr(product, "risk_status_override", None)
+    if override and override in STATUS_LABELS:
+        is_manual_risk = True
+        status = override
+        label = STATUS_LABELS[override]
+        severity = STATUS_SEVERITY.get(override, "normal")
+        action = STATUS_ACTION.get(override, action)
+
+    risk_note = getattr(product, "risk_note", "") or ""
+    if risk_note:
+        recommendation = risk_note
+
+    risk_priority = getattr(product, "risk_priority", None) or SEVERITY_PRIORITY.get(severity, "low")
+
     return {
         "status": label,
         "status_code": status,
@@ -102,6 +145,10 @@ def product_signal(product: Product, today: date | None = None) -> dict:
         "days_without_sales": days_without_sales,
         "recommendation": recommendation,
         "margin_percent": margin_percent(product),
+        "is_manual_risk": is_manual_risk,
+        "risk_priority": risk_priority,
+        "risk_note": risk_note,
+        "excluded_from_ai": bool(getattr(product, "excluded_from_ai", False)),
     }
 
 
@@ -125,6 +172,9 @@ def product_to_dict(product: Product) -> dict:
         "do_not_order": product.do_not_order,
         "is_seasonal": product.is_seasonal,
         "is_on_demand": product.is_on_demand,
+        "risk_status_override": product.risk_status_override,
+        "risk_resolved_at": product.risk_resolved_at,
+        "risk_updated_at": product.risk_updated_at,
         "import_batch_id": product.import_batch_id,
         "created_at": product.created_at,
         "updated_at": product.updated_at,

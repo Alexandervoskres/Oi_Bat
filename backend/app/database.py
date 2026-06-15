@@ -34,6 +34,12 @@ def _apply_migrations() -> None:
         ("products", "do_not_order", "BOOLEAN NOT NULL DEFAULT 0"),
         ("products", "is_seasonal", "BOOLEAN NOT NULL DEFAULT 0"),
         ("products", "is_on_demand", "BOOLEAN NOT NULL DEFAULT 0"),
+        ("products", "risk_status_override", "VARCHAR(40)"),
+        ("products", "risk_priority", "VARCHAR(20)"),
+        ("products", "risk_note", "TEXT NOT NULL DEFAULT ''"),
+        ("products", "excluded_from_ai", "BOOLEAN NOT NULL DEFAULT 0"),
+        ("products", "risk_resolved_at", "DATETIME"),
+        ("products", "risk_updated_at", "DATETIME"),
     ]
     with engine.connect() as conn:
         for table, col, definition in new_columns:

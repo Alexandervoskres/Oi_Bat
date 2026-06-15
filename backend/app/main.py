@@ -9,7 +9,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .config import FRONTEND_DIR, settings
 from .database import init_db
-from .routers import analytics, auth, imports, procurement, products, reports, users
+from .routers import ai_chat, analytics, auth, imports, procurement, products, reports, users
 
 
 @asynccontextmanager
@@ -36,6 +36,7 @@ app.include_router(products.router)
 app.include_router(imports.router)
 app.include_router(analytics.router)
 app.include_router(procurement.router)
+app.include_router(ai_chat.router)
 app.include_router(reports.router)
 
 

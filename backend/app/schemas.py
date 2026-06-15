@@ -93,15 +93,61 @@ class UploadResponse(BaseModel):
 
 
 class ProductUpdate(BaseModel):
-    name: str | None = None
+    sku: str | None = Field(default=None, min_length=1, max_length=80)
+    name: str | None = Field(default=None, min_length=1, max_length=255)
     category: str | None = None
+    stock: int | None = Field(default=None, ge=0)
+    sold_month: int | None = Field(default=None, ge=0)
+    avg_monthly_sales: float | None = Field(default=None, ge=0)
+    purchase_price: float | None = Field(default=None, ge=0)
+    sale_price: float | None = Field(default=None, ge=0)
+    last_sale_date: date | None = None
     supplier: str | None = None
-    min_stock: int | None = None
-    lead_time_days: int | None = None
+    min_stock: int | None = Field(default=None, ge=0)
+    lead_time_days: int | None = Field(default=None, ge=1)
     notes: str | None = None
     do_not_order: bool | None = None
     is_seasonal: bool | None = None
     is_on_demand: bool | None = None
+
+
+class ProductCreate(BaseModel):
+    sku: str = Field(min_length=1, max_length=80)
+    name: str = Field(min_length=1, max_length=255)
+    category: str = "Без категории"
+    stock: int = Field(default=0, ge=0)
+    sold_month: int = Field(default=0, ge=0)
+    avg_monthly_sales: float = Field(default=0.0, ge=0)
+    purchase_price: float = Field(default=0.0, ge=0)
+    sale_price: float = Field(default=0.0, ge=0)
+    last_sale_date: date | None = None
+    supplier: str = ""
+    min_stock: int = Field(default=5, ge=0)
+    lead_time_days: int = Field(default=7, ge=1)
+    notes: str = ""
+    do_not_order: bool = False
+    is_seasonal: bool = False
+    is_on_demand: bool = False
+
+
+class ProductRiskUpdate(BaseModel):
+    risk_status_override: str | None = None  # "" clears the override
+    risk_priority: str | None = None
+    risk_note: str | None = None
+    excluded_from_ai: bool | None = None
+    do_not_order: bool | None = None
+    is_seasonal: bool | None = None
+    risk_resolved_at: datetime | None = None
+
+
+class ChatRequest(BaseModel):
+    message: str = Field(min_length=1, max_length=2000)
+
+
+class ChatResponse(BaseModel):
+    answer: str
+    suggested_actions: list[str] = []
+    used_products: list[str] = []
 
 
 class ImportPreviewRow(BaseModel):
