@@ -1,0 +1,16 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: skladai-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: skladai
+      POSTGRES_USER: skladai
+      POSTGRES_PASSWORD: skladai
+    ports:
+      - "5432:5432"
+    volumes:
+      - skladai_pgdata:/var/lib/postgresql/data
+
+volumes:
+  skladai_pgdata:
