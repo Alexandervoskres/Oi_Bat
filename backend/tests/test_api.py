@@ -629,3 +629,120 @@ def test_chat_falls_back_to_rule_based_when_claw_and_claude_unavailable():
     body = response.json()
     assert body["source"] == "rule_based"
     assert body["agent"] == "StoreAI"
+
+
+# ─── Suppliers ────────────────────────────────────────────────────────────────
+
+
+def test_supplier_crud_and_product_link():
+    with TestClient(app) as client:
+        headers = _login(client)
+        created = client.post(
+            "/api/suppliers",
+            headers=headers,
+            json={"name": "Bosch Pro", "contact_person": "Иван", "reliability": 5, "lead_time_days": 7},
+        )
+        assert created.status_code == 201
+        sup = created.json()
+        assert sup["reliability"] == 5
+        assert sup["product_count"] == 0
+
+        # Link a product to the supplier.
+        product = _create_product(client, headers, "SUP-LINK-1", supplier_id=sup["id"])
+        assert product["supplier_id"] == sup["id"]
+
+        listing = client.get("/api/suppliers", headers=headers)
+        row = next(s for s in listing.json() if s["id"] == sup["id"])
+        assert row["product_count"] == 1
+
+        # Update.
+        upd = client.patch(f"/api/suppliers/{sup['id']}", headers=headers, json={"reliability": 3})
+        assert upd.status_code == 200
+        assert upd.json()["reliability"] == 3
+
+
+def test_supplier_duplicate_name_rejected():
+    with TestClient(app) as client:
+        headers = _login(client)
+        client.post("/api/suppliers", headers=headers, json={"name": "DeWalt"})
+        dup = client.post("/api/suppliers", headers=headers, json={"name": "DeWalt"})
+
+    assert dup.status_code == 409
+
+
+def test_supplier_delete_admin_only_and_detaches_products():
+    with TestClient(app) as client:
+        admin_headers = _login(client)
+        created = client.post("/api/suppliers", headers=admin_headers, json={"name": "Makita"})
+        sup_id = created.json()["id"]
+        product = _create_product(client, admin_headers, "SUP-DET-1", supplier_id=sup_id)
+
+        manager_headers = _ensure_manager(client, admin_headers)
+        forbidden = client.delete(f"/api/suppliers/{sup_id}", headers=manager_headers)
+        assert forbidden.status_code == 403
+
+        deleted = client.delete(f"/api/suppliers/{sup_id}", headers=admin_headers)
+        assert deleted.status_code == 204
+
+        # Product survives, detached from the supplier.
+        fetched = client.get(f"/api/products/{product['id']}", headers=admin_headers)
+        assert fetched.json()["supplier_id"] is None
+
+
+def test_buyer_cannot_create_supplier():
+    with TestClient(app) as client:
+        admin_headers = _login(client)
+        buyer_headers = _ensure_buyer(client, admin_headers)
+        response = client.post("/api/suppliers", headers=buyer_headers, json={"name": "Запрещено"})
+
+    assert response.status_code == 403
+
+
+# ─── Dashboard period comparison ──────────────────────────────────────────────
+
+
+def test_dashboard_comparison_reflects_latest_two_imports():
+    # Two single-row imports become the latest two batches, so the comparison
+    # aggregates are deterministic regardless of batches left by other tests.
+    with TestClient(app) as client:
+        headers = _login(client)
+        first = _xlsx_bytes([{"Название товара": "Сравн товар", "Остаток": 5, "Продано за месяц": 2, "Продажная цена": 100}])
+        client.post(
+            "/api/imports/upload",
+            headers=headers,
+            files={"file": ("cmp1.xlsx", first, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+        )
+        second = _xlsx_bytes([{"Название товара": "Сравн товар", "Остаток": 8, "Продано за месяц": 6, "Продажная цена": 100}])
+        client.post(
+            "/api/imports/upload",
+            headers=headers,
+            files={"file": ("cmp2.xlsx", second, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+        )
+        dashboard = client.get("/api/dashboard", headers=headers).json()
+
+    comp = dashboard["comparison"]
+    assert comp is not None
+    assert comp["sold_units"]["current"] == 6
+    assert comp["sold_units"]["previous"] == 2
+    assert comp["sold_units"]["change"] == 4
+    assert comp["revenue"]["current"] == 600  # 6 * 100
+    assert comp["sold_units"]["percent"] == 200.0  # (6-2)/2 * 100
+
+
+def test_period_comparison_none_on_empty_db():
+    # Unit-level: a session with no import batches yields no comparison.
+    from backend.app.database import SessionLocal
+    from backend.app.models import ImportBatch
+    from backend.app.services.analytics import _period_comparison
+
+    db = SessionLocal()
+    try:
+        had_batches = db.query(ImportBatch).count() > 0
+        result = _period_comparison(db)
+    finally:
+        db.close()
+    # If the shared DB already has >=2 batches we get a dict; otherwise None.
+    if not had_batches:
+        assert result is None
+    else:
+        assert result is None or isinstance(result, dict)

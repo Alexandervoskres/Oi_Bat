@@ -62,6 +62,7 @@ class Product(Base):
     sale_price: Mapped[float] = mapped_column(Float, default=0)
     last_sale_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     supplier: Mapped[str] = mapped_column(String(160), default="")
+    supplier_id: Mapped[int | None] = mapped_column(ForeignKey("suppliers.id"), nullable=True)
     min_stock: Mapped[int] = mapped_column(Integer, default=5)
     lead_time_days: Mapped[int] = mapped_column(Integer, default=7)
     notes: Mapped[str] = mapped_column(Text, default="")
@@ -79,6 +80,23 @@ class Product(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, onupdate=utc_now)
 
     import_batch: Mapped[ImportBatch | None] = relationship(back_populates="products")
+
+
+class Supplier(Base):
+    __tablename__ = "suppliers"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    name: Mapped[str] = mapped_column(String(160), unique=True, index=True)
+    contact_person: Mapped[str] = mapped_column(String(160), default="")
+    phone: Mapped[str] = mapped_column(String(60), default="")
+    email: Mapped[str] = mapped_column(String(160), default="")
+    reliability: Mapped[int] = mapped_column(Integer, default=3)  # 1..5 rating
+    min_order_amount: Mapped[float] = mapped_column(Float, default=0)
+    payment_terms: Mapped[str] = mapped_column(String(200), default="")
+    lead_time_days: Mapped[int] = mapped_column(Integer, default=7)
+    notes: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, onupdate=utc_now)
 
 
 class MovementType(str, enum.Enum):

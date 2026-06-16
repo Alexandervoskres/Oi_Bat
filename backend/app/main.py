@@ -9,7 +9,18 @@ from fastapi.staticfiles import StaticFiles
 
 from .config import FRONTEND_DIR, settings
 from .database import init_db
-from .routers import ai_chat, analytics, audit, auth, imports, procurement, products, reports, users
+from .routers import (
+    ai_chat,
+    analytics,
+    audit,
+    auth,
+    imports,
+    procurement,
+    products,
+    reports,
+    suppliers,
+    users,
+)
 
 
 @asynccontextmanager
@@ -33,6 +44,7 @@ app.add_middleware(
 app.include_router(auth.router)
 app.include_router(users.router)
 app.include_router(products.router)
+app.include_router(suppliers.router)
 app.include_router(imports.router)
 app.include_router(analytics.router)
 app.include_router(procurement.router)

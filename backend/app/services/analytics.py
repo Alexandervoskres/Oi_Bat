@@ -166,6 +166,7 @@ def product_to_dict(product: Product) -> dict:
         "sale_price": product.sale_price,
         "last_sale_date": product.last_sale_date,
         "supplier": product.supplier,
+        "supplier_id": product.supplier_id,
         "min_stock": product.min_stock,
         "lead_time_days": product.lead_time_days,
         "notes": product.notes,
@@ -242,4 +243,56 @@ def build_dashboard(db: Session, ai_summary: str) -> dict:
         "forecast": forecast,
         "import_history": import_history,
         "status_distribution": [{"status": key, "count": value} for key, value in counter.items()],
+        "comparison": _period_comparison(db),
+    }
+
+
+def _snapshot_aggregates(snapshots: list[ProductSnapshot]) -> dict:
+    return {
+        "revenue": round(sum(s.sold_month * s.sale_price for s in snapshots), 2),
+        "sold_units": sum(s.sold_month for s in snapshots),
+        "stock": sum(s.stock for s in snapshots),
+        "sku_count": len(snapshots),
+    }
+
+
+def _delta(current: float, previous: float) -> dict:
+    change = round(current - previous, 2)
+    if previous:
+        percent = round((change / previous) * 100, 1)
+    else:
+        percent = None  # no baseline to compare against
+    return {"current": current, "previous": previous, "change": change, "percent": percent}
+
+
+def _period_comparison(db: Session) -> dict | None:
+    """Compare the two most recent import batches as periods.
+
+    Each Excel import is a point-in-time snapshot, so the latest two batches act
+    as "current" vs "previous". Returns None until at least two imports exist.
+    """
+    batches = (
+        db.query(ImportBatch)
+        .order_by(ImportBatch.created_at.desc(), ImportBatch.id.desc())
+        .limit(2)
+        .all()
+    )
+    if len(batches) < 2:
+        return None
+
+    current_batch, previous_batch = batches[0], batches[1]
+    current = _snapshot_aggregates(
+        db.query(ProductSnapshot).filter(ProductSnapshot.import_batch_id == current_batch.id).all()
+    )
+    previous = _snapshot_aggregates(
+        db.query(ProductSnapshot).filter(ProductSnapshot.import_batch_id == previous_batch.id).all()
+    )
+
+    return {
+        "current_label": current_batch.created_at.strftime("%d.%m.%Y"),
+        "previous_label": previous_batch.created_at.strftime("%d.%m.%Y"),
+        "revenue": _delta(current["revenue"], previous["revenue"]),
+        "sold_units": _delta(current["sold_units"], previous["sold_units"]),
+        "stock": _delta(current["stock"], previous["stock"]),
+        "sku_count": _delta(current["sku_count"], previous["sku_count"]),
     }

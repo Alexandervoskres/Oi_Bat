@@ -11,6 +11,7 @@ const NAV_ITEMS = [
   { id: "warehouse", label: "Склад", adminOnly: false },
   { id: "risks", label: "Риски", adminOnly: false },
   { id: "procurement", label: "Закупки", adminOnly: false },
+  { id: "suppliers", label: "Поставщики", adminOnly: false },
   { id: "chat", label: "AI-советник", adminOnly: false },
   { id: "imports", label: "Excel и история", adminOnly: false },
   { id: "reports", label: "Отчеты", adminOnly: false },
@@ -114,6 +115,14 @@ const state = {
     loading: false,
     error: "",
     filter: { action: "" },
+  },
+  suppliers: {
+    rows: [],
+    loading: false,
+    error: "",
+    message: "",
+    editingId: null,
+    form: { name: "", contact_person: "", phone: "", email: "", reliability: 3, min_order_amount: 0, payment_terms: "", lead_time_days: 7, notes: "" },
   },
   modal: {
     open: false,
@@ -392,6 +401,7 @@ function bindShell() {
       if (state.active === "warehouse" && !state.warehouse.rows.length) await loadProducts();
       if (state.active === "risks") await loadRisks();
       if (state.active === "procurement") await loadProcurement();
+      if (state.active === "suppliers") await loadSuppliers();
       if (state.active === "imports" && !state.imports.rows.length) await loadImports();
       if (state.active === "audit") await loadAudit();
       if (state.active === "users" && !state.users.rows.length) await loadUsers();
@@ -408,6 +418,7 @@ function activeTemplate() {
   if (state.active === "warehouse") return warehouseTemplate();
   if (state.active === "risks") return risksTemplate();
   if (state.active === "procurement") return procurementTemplate();
+  if (state.active === "suppliers") return suppliersTemplate();
   if (state.active === "chat") return chatTemplate();
   if (state.active === "imports") return importsTemplate();
   if (state.active === "reports") return reportsTemplate();
@@ -421,6 +432,7 @@ function bindActiveScreen() {
   if (state.active === "warehouse") bindWarehouse();
   if (state.active === "risks") bindRisks();
   if (state.active === "procurement") bindProcurement();
+  if (state.active === "suppliers") bindSuppliers();
   if (state.active === "chat") bindChat();
   if (state.active === "imports") bindImports();
   if (state.active === "reports") bindReports();
@@ -454,6 +466,42 @@ function statusPill(status, severity) {
   return `<span class="status-pill status-${escapeHtml(severity || "normal")}">${escapeHtml(status)}</span>`;
 }
 
+function deltaBadge(delta, { money = false, invert = false } = {}) {
+  const change = delta.change;
+  const fmt = (v) => (money ? formatMoney(v) : new Intl.NumberFormat("ru-RU").format(v));
+  let dir = change > 0 ? "up" : change < 0 ? "down" : "flat";
+  const arrow = change > 0 ? "▲" : change < 0 ? "▼" : "■";
+  // For "good when down" metrics (e.g. dead stock) invert the color meaning.
+  const tone = dir === "flat" ? "flat" : invert ? (dir === "up" ? "down" : "up") : dir;
+  const pct = delta.percent === null || delta.percent === undefined ? "" : ` (${change >= 0 ? "+" : ""}${delta.percent}%)`;
+  return `<span class="delta delta-${tone}">${arrow} ${change >= 0 ? "+" : ""}${fmt(change)}${pct}</span>`;
+}
+
+function comparisonTemplate(comparison) {
+  if (!comparison) return "";
+  const cell = (label, delta, opts) => `
+    <div class="comparison-cell">
+      <span>${escapeHtml(label)}</span>
+      <strong>${opts && opts.money ? formatMoney(delta.current) : new Intl.NumberFormat("ru-RU").format(delta.current)}</strong>
+      ${deltaBadge(delta, opts)}
+    </div>
+  `;
+  return `
+    <section class="panel comparison-panel">
+      <div class="panel-title">
+        <h3>Динамика по импортам</h3>
+        <span>${escapeHtml(comparison.previous_label)} → ${escapeHtml(comparison.current_label)}</span>
+      </div>
+      <div class="comparison-grid">
+        ${cell("Выручка/мес", comparison.revenue, { money: true })}
+        ${cell("Продано, шт.", comparison.sold_units, {})}
+        ${cell("Остаток, шт.", comparison.stock, {})}
+        ${cell("Позиций", comparison.sku_count, {})}
+      </div>
+    </section>
+  `;
+}
+
 function dashboardTemplate() {
   const data = state.dashboard;
   const maxSales = Math.max(...(data.top_sales || []).map((item) => item.sold_month), 1);
@@ -483,6 +531,8 @@ function dashboardTemplate() {
         </div>
         <button class="button ai-strip-btn" type="button" id="open-chat"><span>Спросить AI</span></button>
       </div>
+
+      ${comparisonTemplate(data.comparison)}
 
       <div class="dashboard-grid">
         <section class="panel">
@@ -778,6 +828,7 @@ const BLANK_PRODUCT = {
   sale_price: 0,
   last_sale_date: null,
   supplier: "",
+  supplier_id: null,
   min_stock: 5,
   lead_time_days: 7,
   notes: "",
@@ -794,12 +845,30 @@ const BLANK_PRODUCT = {
   severity: "normal",
 };
 
+function ensureSuppliersLoaded() {
+  // Populate the supplier dropdown in the product card without blocking it.
+  if (!state.suppliers.rows.length) {
+    loadSuppliersQuiet();
+  }
+}
+
+async function loadSuppliersQuiet() {
+  try {
+    const response = await api("/api/suppliers");
+    state.suppliers.rows = await response.json();
+    if (state.modal.open) render();
+  } catch (_) {
+    // Non-fatal: the card still works, just without the supplier dropdown list.
+  }
+}
+
 function openCreateModal() {
   state.modal = {
     open: true, mode: "create", product: { ...BLANK_PRODUCT },
     saving: false, error: "", movements: [], movementSaving: false, movementError: "",
   };
   render();
+  ensureSuppliersLoaded();
 }
 
 async function openProductModal(productId) {
@@ -811,6 +880,7 @@ async function openProductModal(productId) {
       saving: false, error: "", movements: [], movementSaving: false, movementError: "",
     };
     render();
+    ensureSuppliersLoaded();
     loadMovements(productId);
   } catch (error) {
     state.warehouse.error = error.message;
@@ -890,8 +960,17 @@ function modalTemplate() {
               <input id="pf-category" value="${escapeHtml(p.category)}" />
             </label>
             <label class="form-label">
-              <span>Поставщик</span>
+              <span>Поставщик (текст)</span>
               <input id="pf-supplier" value="${escapeHtml(p.supplier)}" />
+            </label>
+            <label class="form-label">
+              <span>Поставщик (справочник)</span>
+              <select id="pf-supplier-id">
+                <option value="">— не выбран —</option>
+                ${(state.suppliers.rows || [])
+                  .map((s) => `<option value="${s.id}" ${p.supplier_id === s.id ? "selected" : ""}>${escapeHtml(s.name)}</option>`)
+                  .join("")}
+              </select>
             </label>
           </div>
 
@@ -1111,6 +1190,7 @@ function readProductForm() {
     name: get("pf-name").value.trim(),
     category: get("pf-category").value.trim() || "Без категории",
     supplier: get("pf-supplier").value.trim(),
+    supplier_id: get("pf-supplier-id").value ? Number(get("pf-supplier-id").value) : null,
     stock: Number(get("pf-stock").value),
     sold_month: Number(get("pf-sold-month").value),
     avg_monthly_sales: Number(get("pf-avg").value),
@@ -2420,6 +2500,217 @@ async function loadAudit() {
     state.audit.error = error.message;
   } finally {
     state.audit.loading = false;
+    render();
+  }
+}
+
+// ─── Suppliers ────────────────────────────────────────────────────────────────
+
+function reliabilityStars(n) {
+  const full = Math.max(0, Math.min(5, Number(n) || 0));
+  return "★".repeat(full) + "☆".repeat(5 - full);
+}
+
+function suppliersTemplate() {
+  const model = state.suppliers;
+  const canEdit = ["admin", "manager"].includes(state.user.role);
+  const isAdmin = state.user.role === "admin";
+  const f = model.form;
+  return `
+    <section class="screen">
+      <header class="screen-header">
+        <div>
+          <span class="eyebrow">справочник</span>
+          <h2>Поставщики</h2>
+        </div>
+        ${button("Обновить", "button-secondary", 'type="button" id="suppliers-refresh"')}
+      </header>
+
+      ${model.error ? `<div class="error-box" style="margin-bottom:14px">${escapeHtml(model.error)}</div>` : ""}
+      ${model.message ? `<div class="notice-box" style="margin-bottom:14px">${escapeHtml(model.message)}</div>` : ""}
+
+      <div class="two-column">
+        ${
+          canEdit
+            ? `
+          <section class="panel">
+            <div class="panel-title"><h3>${model.editingId ? "Редактирование поставщика" : "Новый поставщик"}</h3></div>
+            <form id="supplier-form" class="supplier-form">
+              <input id="sup-name" placeholder="Название*" value="${escapeHtml(f.name)}" />
+              <input id="sup-contact" placeholder="Контактное лицо" value="${escapeHtml(f.contact_person)}" />
+              <div class="form-grid-2">
+                <input id="sup-phone" placeholder="Телефон" value="${escapeHtml(f.phone)}" />
+                <input id="sup-email" placeholder="Email" value="${escapeHtml(f.email)}" />
+              </div>
+              <div class="form-grid-2">
+                <label class="form-label"><span>Надёжность (1–5)</span><input id="sup-reliability" type="number" min="1" max="5" value="${escapeHtml(f.reliability)}" /></label>
+                <label class="form-label"><span>Срок поставки (дн.)</span><input id="sup-lead" type="number" min="1" value="${escapeHtml(f.lead_time_days)}" /></label>
+              </div>
+              <label class="form-label"><span>Мин. сумма заказа</span><input id="sup-minorder" type="number" min="0" value="${escapeHtml(f.min_order_amount)}" /></label>
+              <input id="sup-payment" placeholder="Условия оплаты" value="${escapeHtml(f.payment_terms)}" />
+              <textarea id="sup-notes" rows="2" class="form-textarea" placeholder="Заметки">${escapeHtml(f.notes)}</textarea>
+              <div class="modal-actions-right">
+                ${model.editingId ? button("Отмена", "button-ghost", 'type="button" id="supplier-cancel"') : ""}
+                ${button(model.editingId ? "Сохранить" : "Создать", "", 'type="submit"')}
+              </div>
+            </form>
+          </section>
+        `
+            : ""
+        }
+        <section class="panel">
+          <div class="panel-title">
+            <h3>Список поставщиков</h3>
+            <span>${escapeHtml(model.rows.length)}</span>
+          </div>
+          ${
+            model.loading
+              ? `<div class="empty-state">Загружаю...</div>`
+              : model.rows.length
+                ? `
+                <table class="data-table suppliers-table">
+                  <thead>
+                    <tr><th>Поставщик</th><th>Надёжность</th><th>Срок</th><th>Товаров</th>${canEdit ? "<th></th>" : ""}</tr>
+                  </thead>
+                  <tbody>
+                    ${model.rows
+                      .map(
+                        (s) => `
+                        <tr>
+                          <td>
+                            <strong>${escapeHtml(s.name)}</strong>
+                            <span>${escapeHtml([s.contact_person, s.phone, s.email].filter(Boolean).join(" · ") || "—")}</span>
+                            ${s.payment_terms ? `<span>Оплата: ${escapeHtml(s.payment_terms)}</span>` : ""}
+                          </td>
+                          <td><span class="reliability-stars" title="${escapeHtml(s.reliability)}/5">${reliabilityStars(s.reliability)}</span></td>
+                          <td>${escapeHtml(s.lead_time_days)} дн.</td>
+                          <td>${escapeHtml(s.product_count)}</td>
+                          ${
+                            canEdit
+                              ? `<td class="row-actions">
+                                  <button class="btn-icon btn-supplier-edit" data-id="${s.id}" title="Редактировать">✏️</button>
+                                  ${isAdmin ? `<button class="btn-icon btn-supplier-delete" data-id="${s.id}" data-name="${escapeHtml(s.name)}" title="Удалить">🗑</button>` : ""}
+                                </td>`
+                              : ""
+                          }
+                        </tr>
+                      `,
+                      )
+                      .join("")}
+                  </tbody>
+                </table>
+              `
+                : `<div class="empty-state">Поставщиков пока нет.</div>`
+          }
+        </section>
+      </div>
+    </section>
+  `;
+}
+
+function bindSuppliers() {
+  document.getElementById("suppliers-refresh")?.addEventListener("click", loadSuppliers);
+  document.getElementById("supplier-form")?.addEventListener("submit", saveSupplier);
+  document.getElementById("supplier-cancel")?.addEventListener("click", () => {
+    resetSupplierForm();
+    render();
+  });
+  document.querySelectorAll(".btn-supplier-edit").forEach((btn) => {
+    btn.addEventListener("click", () => startEditSupplier(Number(btn.dataset.id)));
+  });
+  document.querySelectorAll(".btn-supplier-delete").forEach((btn) => {
+    btn.addEventListener("click", () => deleteSupplier(Number(btn.dataset.id), btn.dataset.name));
+  });
+}
+
+function resetSupplierForm() {
+  state.suppliers.editingId = null;
+  state.suppliers.form = { name: "", contact_person: "", phone: "", email: "", reliability: 3, min_order_amount: 0, payment_terms: "", lead_time_days: 7, notes: "" };
+}
+
+function startEditSupplier(id) {
+  const s = state.suppliers.rows.find((r) => r.id === id);
+  if (!s) return;
+  state.suppliers.editingId = id;
+  state.suppliers.form = {
+    name: s.name, contact_person: s.contact_person, phone: s.phone, email: s.email,
+    reliability: s.reliability, min_order_amount: s.min_order_amount, payment_terms: s.payment_terms,
+    lead_time_days: s.lead_time_days, notes: s.notes,
+  };
+  state.suppliers.message = "";
+  render();
+}
+
+function readSupplierForm() {
+  return {
+    name: document.getElementById("sup-name").value.trim(),
+    contact_person: document.getElementById("sup-contact").value.trim(),
+    phone: document.getElementById("sup-phone").value.trim(),
+    email: document.getElementById("sup-email").value.trim(),
+    reliability: Number(document.getElementById("sup-reliability").value),
+    lead_time_days: Number(document.getElementById("sup-lead").value),
+    min_order_amount: Number(document.getElementById("sup-minorder").value),
+    payment_terms: document.getElementById("sup-payment").value.trim(),
+    notes: document.getElementById("sup-notes").value,
+  };
+}
+
+async function loadSuppliers() {
+  state.suppliers.loading = true;
+  state.suppliers.error = "";
+  render();
+  try {
+    const response = await api("/api/suppliers");
+    state.suppliers.rows = await response.json();
+  } catch (error) {
+    state.suppliers.error = error.message;
+  } finally {
+    state.suppliers.loading = false;
+    render();
+  }
+}
+
+async function saveSupplier(event) {
+  event.preventDefault();
+  const form = readSupplierForm();
+  if (!form.name) {
+    state.suppliers.error = "Укажите название поставщика.";
+    render();
+    return;
+  }
+  if (form.reliability < 1 || form.reliability > 5) {
+    state.suppliers.error = "Надёжность должна быть от 1 до 5.";
+    render();
+    return;
+  }
+
+  const editingId = state.suppliers.editingId;
+  state.suppliers.error = "";
+  state.suppliers.message = "";
+  try {
+    if (editingId) {
+      await api(`/api/suppliers/${editingId}`, { method: "PATCH", body: JSON.stringify(form) });
+      state.suppliers.message = "Поставщик обновлён.";
+    } else {
+      await api("/api/suppliers", { method: "POST", body: JSON.stringify(form) });
+      state.suppliers.message = "Поставщик создан.";
+    }
+    resetSupplierForm();
+    await loadSuppliers();
+  } catch (error) {
+    state.suppliers.error = error.message;
+    render();
+  }
+}
+
+async function deleteSupplier(id, name) {
+  if (!window.confirm(`Удалить поставщика «${name}»? Товары будут отвязаны.`)) return;
+  try {
+    await api(`/api/suppliers/${id}`, { method: "DELETE" });
+    if (state.suppliers.editingId === id) resetSupplierForm();
+    await loadSuppliers();
+  } catch (error) {
+    state.suppliers.error = error.message;
     render();
   }
 }

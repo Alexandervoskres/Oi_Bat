@@ -82,6 +82,7 @@ class DashboardResponse(BaseModel):
     forecast: list[dict]
     import_history: list[dict]
     status_distribution: list[dict]
+    comparison: dict | None = None
 
 
 class UploadResponse(BaseModel):
@@ -103,6 +104,7 @@ class ProductUpdate(BaseModel):
     sale_price: float | None = Field(default=None, ge=0)
     last_sale_date: date | None = None
     supplier: str | None = None
+    supplier_id: int | None = None
     min_stock: int | None = Field(default=None, ge=0)
     lead_time_days: int | None = Field(default=None, ge=1)
     notes: str | None = None
@@ -122,6 +124,7 @@ class ProductCreate(BaseModel):
     sale_price: float = Field(default=0.0, ge=0)
     last_sale_date: date | None = None
     supplier: str = ""
+    supplier_id: int | None = None
     min_stock: int = Field(default=5, ge=0)
     lead_time_days: int = Field(default=7, ge=1)
     notes: str = ""
@@ -166,6 +169,42 @@ class AiStatusResponse(BaseModel):
     fallback_agent: str = "StoreAI"
     claw: dict
     claude_enabled: bool = False
+
+
+class SupplierBase(BaseModel):
+    name: str = Field(min_length=1, max_length=160)
+    contact_person: str = Field(default="", max_length=160)
+    phone: str = Field(default="", max_length=60)
+    email: str = Field(default="", max_length=160)
+    reliability: int = Field(default=3, ge=1, le=5)
+    min_order_amount: float = Field(default=0, ge=0)
+    payment_terms: str = Field(default="", max_length=200)
+    lead_time_days: int = Field(default=7, ge=1)
+    notes: str = Field(default="", max_length=2000)
+
+
+class SupplierCreate(SupplierBase):
+    pass
+
+
+class SupplierUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=160)
+    contact_person: str | None = None
+    phone: str | None = None
+    email: str | None = None
+    reliability: int | None = Field(default=None, ge=1, le=5)
+    min_order_amount: float | None = Field(default=None, ge=0)
+    payment_terms: str | None = None
+    lead_time_days: int | None = Field(default=None, ge=1)
+    notes: str | None = None
+
+
+class SupplierOut(SupplierBase):
+    id: int
+    product_count: int = 0
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
 
 
 class MovementCreate(BaseModel):
