@@ -13,6 +13,7 @@ const NAV_ITEMS = [
   { id: "dashboard", label: "Дашборд", adminOnly: false },
   { id: "warehouse", label: "Склад", adminOnly: false },
   { id: "risks", label: "Риски", adminOnly: false },
+  { id: "abc", label: "ABC/XYZ", adminOnly: false },
   { id: "procurement", label: "Закупки", adminOnly: false },
   { id: "suppliers", label: "Поставщики", adminOnly: false },
   { id: "chat", label: "AI-советник", adminOnly: false },
@@ -118,6 +119,11 @@ const state = {
     loading: false,
     error: "",
     filter: { action: "" },
+  },
+  abc: {
+    data: null,
+    loading: false,
+    error: "",
   },
   suppliers: {
     rows: [],
@@ -403,6 +409,7 @@ function bindShell() {
       render();
       if (state.active === "warehouse" && !state.warehouse.rows.length) await loadProducts();
       if (state.active === "risks") await loadRisks();
+      if (state.active === "abc") await loadAbc();
       if (state.active === "procurement") await loadProcurement();
       if (state.active === "suppliers") await loadSuppliers();
       if (state.active === "imports" && !state.imports.rows.length) await loadImports();
@@ -420,6 +427,7 @@ function activeTemplate() {
   if (state.active === "dashboard") return dashboardTemplate();
   if (state.active === "warehouse") return warehouseTemplate();
   if (state.active === "risks") return risksTemplate();
+  if (state.active === "abc") return abcTemplate();
   if (state.active === "procurement") return procurementTemplate();
   if (state.active === "suppliers") return suppliersTemplate();
   if (state.active === "chat") return chatTemplate();
@@ -434,6 +442,7 @@ function bindActiveScreen() {
   if (state.active === "dashboard") bindDashboard();
   if (state.active === "warehouse") bindWarehouse();
   if (state.active === "risks") bindRisks();
+  if (state.active === "abc") bindAbc();
   if (state.active === "procurement") bindProcurement();
   if (state.active === "suppliers") bindSuppliers();
   if (state.active === "chat") bindChat();

@@ -725,3 +725,46 @@ def test_period_comparison_none_on_empty_db():
         assert result is None
     else:
         assert result is None or isinstance(result, dict)
+
+
+# ─── ABC/XYZ analysis ─────────────────────────────────────────────────────────
+
+
+def test_abc_xyz_classifies_by_revenue():
+    with TestClient(app) as client:
+        headers = _login(client)
+        # A clearly dominant revenue item + a tiny one.
+        big = _create_product(client, headers, "ABC-BIG", name="ABC дорогой", sold_month=100, sale_price=1000)
+        small = _create_product(client, headers, "ABC-SMALL", name="ABC дешёвый", sold_month=1, sale_price=10)
+        response = client.get("/api/analytics/abc-xyz", headers=headers)
+
+    assert response.status_code == 200
+    body = response.json()
+    rows = {r["sku"]: r for r in body["rows"]}
+    assert rows["ABC-BIG"]["abc"] == "A"
+    assert rows["ABC-BIG"]["revenue"] == 100000
+    # The negligible item lands in C.
+    assert rows["ABC-SMALL"]["abc"] == "C"
+    assert "matrix" in body and "totals" in body
+
+
+def test_abc_xyz_xyz_needs_history():
+    with TestClient(app) as client:
+        headers = _login(client)
+        _create_product(client, headers, "XYZ-NEW", name="Без истории", sold_month=5, sale_price=100)
+        response = client.get("/api/analytics/abc-xyz", headers=headers)
+
+    row = next(r for r in response.json()["rows"] if r["sku"] == "XYZ-NEW")
+    # No snapshots for a manually created product -> XYZ undefined.
+    assert row["xyz"] is None
+    assert row["cv"] is None
+
+
+def test_abc_xyz_computes_cv_from_snapshots():
+    from backend.app.services.abc_xyz import _demand_cv, _xyz_class
+
+    assert _demand_cv([10, 10, 10]) == 0.0
+    assert _xyz_class(0.0) == "X"
+    assert _xyz_class(0.2) == "Y"
+    assert _xyz_class(0.5) == "Z"
+    assert _demand_cv([5]) is None  # insufficient history
