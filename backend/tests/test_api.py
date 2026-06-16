@@ -4,6 +4,8 @@ from io import BytesIO
 import os
 from pathlib import Path
 import tempfile
+from types import SimpleNamespace
+from unittest.mock import patch
 
 import pandas as pd
 
@@ -536,3 +538,94 @@ def test_audit_filter_by_action():
     assert response.status_code == 200
     assert response.json()
     assert all(row["action"] == "product.create" for row in response.json())
+
+
+# ─── AI agent cascade (Claw -> Claude -> rule-based) ──────────────────────────
+
+from backend.app.services.claw_agent import ClawAgentResult  # noqa: E402
+
+
+def test_chat_uses_claw_when_it_answers():
+    with TestClient(app) as client:
+        headers = _login(client)
+        _create_product(client, headers, "CLAW-1", name="Клав товар", stock=0, sold_month=5)
+        with patch(
+            "backend.app.services.ai_service.call_claw_agent",
+            return_value=ClawAgentResult(answer="Ответ Claw: закажите Клав товар"),
+        ):
+            response = client.post("/api/ai/chat", headers=headers, json={"message": "что заказать?"})
+
+    body = response.json()
+    assert body["source"] == "claw"
+    assert body["agent"] == "Claw Code"
+    assert "Claw" in body["answer"]
+    assert "Клав товар" in body["used_products"]
+
+
+def test_chat_excludes_flagged_products_from_agent_context():
+    captured: dict = {}
+
+    def fake_claw(message, context, history=None):
+        captured["skus"] = [c["sku"] for c in context]
+        captured["history_len"] = len(history or [])
+        return ClawAgentResult(answer="ok")
+
+    with TestClient(app) as client:
+        headers = _login(client)
+        visible = _create_product(client, headers, "AG-VISIBLE", name="Виден агенту", stock=1)
+        hidden = _create_product(client, headers, "AG-HIDDEN", name="Скрыт от агента", stock=1)
+        client.patch(f"/api/products/{hidden['id']}/risk", headers=headers, json={"excluded_from_ai": True})
+        with patch("backend.app.services.ai_service.call_claw_agent", side_effect=fake_claw):
+            response = client.post(
+                "/api/ai/chat",
+                headers=headers,
+                json={
+                    "message": "обзор",
+                    "history": [
+                        {"role": "user", "content": "привет"},
+                        {"role": "assistant", "content": "привет!"},
+                    ],
+                },
+            )
+
+    assert response.status_code == 200
+    assert "AG-VISIBLE" in captured["skus"]
+    assert "AG-HIDDEN" not in captured["skus"]  # excluded_from_ai filtered out
+    assert captured["history_len"] == 2  # history forwarded to the agent
+    assert visible["id"] != hidden["id"]
+
+
+def test_chat_falls_back_to_claude_when_claw_silent():
+    fake_settings = SimpleNamespace(claude_enabled=True, claude_api_key="x", ai_history_turns=6)
+    with TestClient(app) as client:
+        headers = _login(client)
+        _create_product(client, headers, "CLD-1", name="Клод товар", stock=0, sold_month=5)
+        with patch(
+            "backend.app.services.ai_service.call_claw_agent",
+            return_value=ClawAgentResult(answer=None),
+        ), patch("backend.app.services.ai_service.settings", fake_settings), patch(
+            "backend.app.services.ai_service._call_claude",
+            return_value="Ответ Клод: закажите Клод товар",
+        ):
+            response = client.post("/api/ai/chat", headers=headers, json={"message": "что заказать?"})
+
+    body = response.json()
+    assert body["source"] == "claude"
+    assert body["agent"] == "Claude API"
+    assert "Клод товар" in body["used_products"]
+
+
+def test_chat_falls_back_to_rule_based_when_claw_and_claude_unavailable():
+    with TestClient(app) as client:
+        headers = _login(client)
+        _create_product(client, headers, "RB-1", name="Правило товар", stock=0, sold_month=5)
+        # claw returns nothing; claude stays disabled (default test env) -> rule-based.
+        with patch(
+            "backend.app.services.ai_service.call_claw_agent",
+            return_value=ClawAgentResult(answer=None),
+        ):
+            response = client.post("/api/ai/chat", headers=headers, json={"message": "что заказать?"})
+
+    body = response.json()
+    assert body["source"] == "rule_based"
+    assert body["agent"] == "StoreAI"
