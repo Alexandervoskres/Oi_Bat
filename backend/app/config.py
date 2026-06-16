@@ -66,6 +66,24 @@ class Settings:
         "CLAUDE_API_URL",
         "https://api.anthropic.com/v1/messages",
     )
+    claw_agent_enabled: bool = _env_bool("CLAW_AGENT_ENABLED")
+    claw_binary_path: str = os.getenv(
+        "CLAW_BINARY_PATH",
+        str(ROOT_DIR.parent / "claw-code-main" / "rust" / "target" / "debug" / "claw.exe"),
+    )
+    claw_workspace: str = os.getenv("CLAW_WORKSPACE", str(ROOT_DIR))
+    claw_model: str = os.getenv("CLAW_MODEL", "")
+    claw_permission_mode: str = os.getenv("CLAW_PERMISSION_MODE", "read-only")
+    claw_timeout_seconds: int = _env_int("CLAW_TIMEOUT_SECONDS", 45)
+    # Max Claw subprocesses running at once; extra requests fall back instead of
+    # piling up and exhausting the request threadpool.
+    claw_max_concurrent: int = _env_int("CLAW_MAX_CONCURRENT", 2)
+    # How long an extra request waits for a free Claw slot before falling back.
+    claw_acquire_timeout_seconds: int = _env_int("CLAW_ACQUIRE_TIMEOUT_SECONDS", 2)
+    # Cache the agent status probe (filesystem + env checks) for this long.
+    claw_status_cache_seconds: int = _env_int("CLAW_STATUS_CACHE_SECONDS", 30)
+    # Number of recent chat turns forwarded to the model for follow-up context.
+    ai_history_turns: int = _env_int("AI_HISTORY_TURNS", 6)
 
     @property
     def is_production(self) -> bool:

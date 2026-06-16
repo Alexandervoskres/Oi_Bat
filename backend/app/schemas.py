@@ -140,14 +140,32 @@ class ProductRiskUpdate(BaseModel):
     risk_resolved_at: datetime | None = None
 
 
+class ChatTurn(BaseModel):
+    role: str = Field(pattern="^(user|assistant)$")
+    content: str = Field(min_length=1, max_length=4000)
+
+
 class ChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=2000)
+    # Recent conversation turns (oldest first) so the agent can follow up.
+    # Trimmed server-side; only the last few are actually sent to the model.
+    history: list[ChatTurn] = Field(default_factory=list, max_length=40)
 
 
 class ChatResponse(BaseModel):
     answer: str
     suggested_actions: list[str] = []
     used_products: list[str] = []
+    agent: str = "StoreAI"
+    source: str = "rule_based"
+    agent_status: str | None = None
+
+
+class AiStatusResponse(BaseModel):
+    active_agent: str
+    fallback_agent: str = "StoreAI"
+    claw: dict
+    claude_enabled: bool = False
 
 
 class ImportPreviewRow(BaseModel):

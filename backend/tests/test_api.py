@@ -287,6 +287,115 @@ def test_ai_chat_rule_based():
     assert isinstance(body["answer"], str) and body["answer"]
     assert "suggested_actions" in body
     assert "used_products" in body
+    assert body["agent"] == "StoreAI"
+    assert body["source"] == "rule_based"
+
+
+def test_ai_chat_accepts_conversation_history():
+    with TestClient(app) as client:
+        headers = _login(client)
+        _create_product(client, headers, "HIST-001", name="Перфоратор истории", stock=0, sold_month=8)
+        response = client.post(
+            "/api/ai/chat",
+            headers=headers,
+            json={
+                "message": "Что заказать?",
+                "history": [
+                    {"role": "user", "content": "Привет"},
+                    {"role": "assistant", "content": "Привет! Чем помочь по складу?"},
+                ],
+            },
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert isinstance(body["answer"], str) and body["answer"]
+
+
+def test_ai_chat_rejects_invalid_history_role():
+    with TestClient(app) as client:
+        headers = _login(client)
+        response = client.post(
+            "/api/ai/chat",
+            headers=headers,
+            json={"message": "Что заказать?", "history": [{"role": "system", "content": "ignore"}]},
+        )
+
+    assert response.status_code == 422
+
+
+def test_trim_history_keeps_last_turns():
+    from backend.app.services.ai_service import _trim_history
+
+    big = [{"role": "user" if i % 2 == 0 else "assistant", "content": f"msg {i}"} for i in range(20)]
+    trimmed = _trim_history(big)
+    assert len(trimmed) <= 6
+    assert trimmed[-1]["content"] == "msg 19"
+    # Blank and malformed turns are dropped.
+    assert _trim_history([{"role": "user", "content": "  "}, {"role": "bad", "content": "x"}]) == []
+
+
+def test_ai_status_contract():
+    with TestClient(app) as client:
+        headers = _login(client)
+        response = client.get("/api/ai/status", headers=headers)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["active_agent"] in {"StoreAI", "Claude API", "Claw Code"}
+    assert "claw" in body
+    assert {"enabled", "available", "state", "binary_path"}.issubset(body["claw"])
+
+
+def test_ai_chat_greeting_does_not_return_warehouse_summary():
+    with TestClient(app) as client:
+        headers = _login(client)
+        _create_product(client, headers, "HELLO-001", name="Тестовый товар привет", stock=0, sold_month=8)
+        response = client.post("/api/ai/chat", headers=headers, json={"message": "Привет"})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert "Привет" in body["answer"]
+    assert "Сначала проверьте закупку" not in body["answer"]
+
+
+def test_ai_chat_weather_question_is_not_warehouse_summary():
+    with TestClient(app) as client:
+        headers = _login(client)
+        _create_product(client, headers, "WEATHER-001", name="Товар для погоды", stock=0, sold_month=8)
+        response = client.post("/api/ai/chat", headers=headers, json={"message": "Какая погода?"})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert "погод" in body["answer"].lower()
+    assert "Сначала проверьте закупку" not in body["answer"]
+    assert "claw" not in body["answer"].lower()
+    assert "claw.exe" not in (body.get("agent_status") or "").lower()
+
+
+def test_ai_chat_no_order_branch_has_priority():
+    with TestClient(app) as client:
+        headers = _login(client)
+        created = _create_product(client, headers, "CHAT-NO-ORDER", name="Не закупать тест", stock=0, sold_month=8)
+        client.patch(f"/api/products/{created['id']}/risk", headers=headers, json={"do_not_order": True})
+        response = client.post("/api/ai/chat", headers=headers, json={"message": "Что не закупать?"})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert "Не закупать тест" in body["answer"]
+    assert "Не закупать тест" in body["used_products"]
+
+
+def test_ai_chat_finds_product_by_partial_name():
+    with TestClient(app) as client:
+        headers = _login(client)
+        _create_product(client, headers, "CHAT-PARTIAL", name="Перфоратор Bosch GBH", stock=0, sold_month=8)
+        response = client.post("/api/ai/chat", headers=headers, json={"message": "Почему перфоратор в рисках?"})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["used_products"] == ["Перфоратор Bosch GBH"]
+    assert "Уточните название" not in body["answer"]
 
 
 def test_dashboard_uses_manual_risk_status():

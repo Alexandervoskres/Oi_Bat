@@ -104,6 +104,36 @@ CLAUDE_MODEL=claude-3-5-sonnet-latest
 
 Логика подключения лежит в `backend/app/services/ai_service.py`. Если API недоступен или ключ не задан, backend автоматически вернется к локальным рекомендациям.
 
+## Claw Code AI-ассистент
+
+StoreAI умеет подключать локальный агент `claw` из соседнего проекта `claw-code-main`.
+Если агент не собран или не настроен, чат продолжит работать через локальные рекомендации.
+
+1. Соберите Claw Code:
+
+```powershell
+cd ..\claw-code-main\rust
+cargo build --workspace
+```
+
+2. В `.env` StoreAI включите адаптер:
+
+```env
+CLAW_AGENT_ENABLED=true
+CLAW_BINARY_PATH=../claw-code-main/rust/target/debug/claw.exe
+CLAW_WORKSPACE=.
+CLAW_PERMISSION_MODE=read-only
+CLAW_MODEL=
+```
+
+3. Передайте ключ провайдера, который использует Claw, например:
+
+```env
+ANTHROPIC_API_KEY=your_key_here
+```
+
+После этого `/api/ai/chat` сначала попробует ответить через Claw Code, а при ошибке вернется к StoreAI/Claude fallback. Статус агента доступен в `/api/ai/status` и отображается в шапке чата.
+
 ## Подготовка к серверу
 
 Перед деплоем замените:
