@@ -8,6 +8,15 @@
   </head>
   <body>
     <div id="root"></div>
-    <script src="/static/app.js?v=local-2"></script>
+    <!-- Ordered classic scripts; they share globals (state, render, helpers).
+         core.js must load first, boot.js (which calls render()) last. -->
+    <script src="/static/js/core.js?v=local-3"></script>
+    <script src="/static/js/warehouse.js?v=local-3"></script>
+    <script src="/static/js/procurement.js?v=local-3"></script>
+    <script src="/static/js/risks.js?v=local-3"></script>
+    <script src="/static/js/chat.js?v=local-3"></script>
+    <script src="/static/js/imports.js?v=local-3"></script>
+    <script src="/static/js/screens.js?v=local-3"></script>
+    <script src="/static/js/boot.js?v=local-3"></script>
   </body>
 </html>
