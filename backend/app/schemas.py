@@ -226,6 +226,24 @@ class MovementOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class NotificationOut(BaseModel):
+    id: int
+    type: str
+    severity: str
+    title: str
+    message: str
+    product_id: int | None
+    is_read: bool
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class NotificationList(BaseModel):
+    items: list[NotificationOut]
+    unread: int
+
+
 class AuditOut(BaseModel):
     id: int
     user_id: int | None

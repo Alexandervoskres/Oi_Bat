@@ -13,6 +13,7 @@ from ..schemas import ImportBatchOut, ImportPreview, UploadResponse
 from ..security import require_roles
 from ..services.audit import record_audit
 from ..services.excel_import import import_products_from_excel, preview_excel_import
+from ..services.notifications import add_import_notification, scan_notifications
 
 
 router = APIRouter(prefix="/api/imports", tags=["imports"])
@@ -62,6 +63,9 @@ async def upload_excel(
             f"(новых {result['created']}, обновлено {result['updated']})"
         ),
     )
+    # Event notification + refresh state alerts off the freshly imported data.
+    add_import_notification(db, result["batch"], result.get("warnings", []))
+    scan_notifications(db)
     return result
 
 

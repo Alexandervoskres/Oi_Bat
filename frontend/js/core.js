@@ -17,6 +17,7 @@ const NAV_ITEMS = [
   { id: "procurement", label: "Закупки", adminOnly: false },
   { id: "suppliers", label: "Поставщики", adminOnly: false },
   { id: "chat", label: "AI-советник", adminOnly: false },
+  { id: "notifications", label: "Уведомления", adminOnly: false },
   { id: "imports", label: "Excel и история", adminOnly: false },
   { id: "reports", label: "Отчеты", adminOnly: false },
   { id: "audit", label: "Аудит", adminOnly: true },
@@ -124,6 +125,13 @@ const state = {
     data: null,
     loading: false,
     error: "",
+  },
+  notifications: {
+    items: [],
+    unread: 0,
+    loading: false,
+    error: "",
+    onlyUnread: false,
   },
   suppliers: {
     rows: [],
@@ -388,6 +396,7 @@ function sidebarTemplate() {
             (item) => `
               <button class="nav-item ${state.active === item.id ? "active" : ""}" data-nav="${item.id}">
                 <span>${escapeHtml(item.label)}</span>
+                ${item.id === "notifications" && state.notifications.unread ? `<span class="nav-badge">${state.notifications.unread > 99 ? "99+" : state.notifications.unread}</span>` : ""}
               </button>
             `,
           )
@@ -412,6 +421,7 @@ function bindShell() {
       if (state.active === "abc") await loadAbc();
       if (state.active === "procurement") await loadProcurement();
       if (state.active === "suppliers") await loadSuppliers();
+      if (state.active === "notifications") await loadNotifications();
       if (state.active === "imports" && !state.imports.rows.length) await loadImports();
       if (state.active === "audit") await loadAudit();
       if (state.active === "users" && !state.users.rows.length) await loadUsers();
@@ -430,6 +440,7 @@ function activeTemplate() {
   if (state.active === "abc") return abcTemplate();
   if (state.active === "procurement") return procurementTemplate();
   if (state.active === "suppliers") return suppliersTemplate();
+  if (state.active === "notifications") return notificationsTemplate();
   if (state.active === "chat") return chatTemplate();
   if (state.active === "imports") return importsTemplate();
   if (state.active === "reports") return reportsTemplate();
@@ -445,6 +456,7 @@ function bindActiveScreen() {
   if (state.active === "abc") bindAbc();
   if (state.active === "procurement") bindProcurement();
   if (state.active === "suppliers") bindSuppliers();
+  if (state.active === "notifications") bindNotifications();
   if (state.active === "chat") bindChat();
   if (state.active === "imports") bindImports();
   if (state.active === "reports") bindReports();
@@ -462,6 +474,22 @@ async function refreshDashboard() {
     state.error = error.message;
   }
   render();
+  refreshUnreadBadge();
+}
+
+async function refreshUnreadBadge() {
+  // Lightweight: keep the sidebar badge current without opening the screen.
+  try {
+    const response = await api("/api/notifications?only_unread=true");
+    const data = await response.json();
+    const next = data.unread || 0;
+    if (next !== state.notifications.unread) {
+      state.notifications.unread = next;
+      render();
+    }
+  } catch (_) {
+    // Non-fatal.
+  }
 }
 
 function metricTemplate(label, value, hint) {

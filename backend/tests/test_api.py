@@ -768,3 +768,71 @@ def test_abc_xyz_computes_cv_from_snapshots():
     assert _xyz_class(0.2) == "Y"
     assert _xyz_class(0.5) == "Z"
     assert _demand_cv([5]) is None  # insufficient history
+
+
+# ─── Notifications ────────────────────────────────────────────────────────────
+
+
+def test_notification_scan_flags_out_of_stock():
+    with TestClient(app) as client:
+        headers = _login(client)
+        _create_product(client, headers, "NOTIF-OOS", name="Закончился товар", stock=0, sold_month=8)
+        scan = client.post("/api/notifications/scan", headers=headers)
+
+    assert scan.status_code == 200
+    body = scan.json()
+    low = [n for n in body["items"] if n["type"] == "low_stock" and "Закончился товар" in n["title"]]
+    assert low
+    assert low[0]["severity"] == "critical"
+    assert body["unread"] >= 1
+
+
+def test_notification_mark_read_decrements_unread():
+    with TestClient(app) as client:
+        headers = _login(client)
+        _create_product(client, headers, "NOTIF-READ", name="Прочитать товар", stock=0, sold_month=8)
+        scan = client.post("/api/notifications/scan", headers=headers).json()
+        before = scan["unread"]
+        target = next(n for n in scan["items"] if not n["is_read"])
+        read = client.post(f"/api/notifications/{target['id']}/read", headers=headers)
+        after = client.get("/api/notifications", headers=headers).json()["unread"]
+
+    assert read.status_code == 204
+    assert after == before - 1
+
+
+def test_notification_scan_is_idempotent():
+    # State alerts are rebuilt each scan, so scanning twice doesn't pile up dupes.
+    with TestClient(app) as client:
+        headers = _login(client)
+        _create_product(client, headers, "NOTIF-DUP", name="Дубль товар", stock=0, sold_month=8)
+        first = client.post("/api/notifications/scan", headers=headers).json()
+        second = client.post("/api/notifications/scan", headers=headers).json()
+
+    count1 = sum(1 for n in first["items"] if n.get("title") == "Скоро закончится: Дубль товар")
+    count2 = sum(1 for n in second["items"] if n.get("title") == "Скоро закончится: Дубль товар")
+    assert count1 == 1
+    assert count2 == 1
+
+
+def test_buyer_cannot_scan_notifications():
+    with TestClient(app) as client:
+        admin_headers = _login(client)
+        buyer_headers = _ensure_buyer(client, admin_headers)
+        response = client.post("/api/notifications/scan", headers=buyer_headers)
+
+    assert response.status_code == 403
+
+
+def test_import_creates_notification():
+    with TestClient(app) as client:
+        headers = _login(client)
+        content = _xlsx_bytes([{"Название товара": "Импорт уведомл", "Остаток": 0, "Продано за месяц": 9, "Продажная цена": 100}])
+        client.post(
+            "/api/imports/upload",
+            headers=headers,
+            files={"file": ("n.xlsx", content, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+        )
+        notes = client.get("/api/notifications", headers=headers).json()
+
+    assert any(n["type"] == "import_warning" for n in notes["items"])

@@ -150,6 +150,19 @@ class AuditLog(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, index=True)
 
 
+class Notification(Base):
+    __tablename__ = "notifications"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    type: Mapped[str] = mapped_column(String(40), index=True)
+    severity: Mapped[str] = mapped_column(String(20), default="notice")
+    title: Mapped[str] = mapped_column(String(200))
+    message: Mapped[str] = mapped_column(Text, default="")
+    product_id: Mapped[int | None] = mapped_column(ForeignKey("products.id"), nullable=True)
+    is_read: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, index=True)
+
+
 class ProductSnapshot(Base):
     __tablename__ = "product_snapshots"
 

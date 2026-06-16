@@ -15,6 +15,7 @@ from .routers import (
     audit,
     auth,
     imports,
+    notifications,
     procurement,
     products,
     reports,
@@ -50,6 +51,7 @@ app.include_router(analytics.router)
 app.include_router(procurement.router)
 app.include_router(ai_chat.router)
 app.include_router(audit.router)
+app.include_router(notifications.router)
 app.include_router(reports.router)
 
 
