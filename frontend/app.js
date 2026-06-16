@@ -1816,9 +1816,6 @@ function chatAgentStatusTemplate(model) {
   if (claw?.available) {
     stateText = "подключен";
     stateClass = "online";
-  } else if (status?.claude_enabled) {
-    stateText = "подключен";
-    stateClass = "online";
   } else if (claw?.enabled) {
     stateText = "локальный режим";
   }
@@ -1882,8 +1879,57 @@ function chatTemplate() {
   `;
 }
 
+function renderMarkdown(raw) {
+  // Escape first, then apply a safe subset of markdown (bold, inline code,
+  // bullet/numbered lists, paragraphs). Operating on already-escaped text means
+  // no user/agent content can inject markup.
+  const inline = (s) =>
+    escapeHtml(s)
+      .replace(/`([^`]+)`/g, "<code>$1</code>")
+      .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+
+  const out = [];
+  let listType = null;
+  const closeList = () => {
+    if (listType) {
+      out.push(`</${listType}>`);
+      listType = null;
+    }
+  };
+
+  for (const line of String(raw ?? "").split("\n")) {
+    const bullet = line.match(/^\s*[•\-*]\s+(.*)$/);
+    const numbered = line.match(/^\s*\d+[.)]\s+(.*)$/);
+    if (bullet) {
+      if (listType !== "ul") {
+        closeList();
+        out.push("<ul>");
+        listType = "ul";
+      }
+      out.push(`<li>${inline(bullet[1])}</li>`);
+    } else if (numbered) {
+      if (listType !== "ol") {
+        closeList();
+        out.push("<ol>");
+        listType = "ol";
+      }
+      out.push(`<li>${inline(numbered[1])}</li>`);
+    } else if (line.trim() === "") {
+      closeList();
+    } else {
+      closeList();
+      out.push(`<div>${inline(line)}</div>`);
+    }
+  }
+  closeList();
+  return out.join("");
+}
+
 function chatBubbleContent(message) {
-  const text = escapeHtml(message.text).replaceAll("\n", "<br>");
+  const text =
+    message.role === "assistant"
+      ? renderMarkdown(message.text)
+      : escapeHtml(message.text).replaceAll("\n", "<br>");
   const agent = message.role === "assistant" && message.agent ? `<div class="chat-agent-label">${escapeHtml(message.agent)}</div>` : "";
   const meta = `
     <div class="chat-meta">
@@ -2056,7 +2102,6 @@ async function loadAiStatus() {
       active_agent: "StoreAI",
       fallback_agent: "StoreAI",
       claw: { enabled: false, available: false, state: "unknown" },
-      claude_enabled: false,
     };
   } finally {
     state.chat.statusLoading = false;
@@ -2732,8 +2777,8 @@ function settingsTemplate() {
           <span>Основной режим через DATABASE_URL. Для локального старта есть fallback SQLite.</span>
         </article>
         <article>
-          <strong>Claude API</strong>
-          <span>Переменные CLAUDE_ENABLED, CLAUDE_API_KEY, CLAUDE_MODEL уже заложены в backend.</span>
+          <strong>AI-ассистент</strong>
+          <span>Основной AI подключается через локальный агент StoreAI. Если агент недоступен, чат использует встроенные складские правила.</span>
         </article>
         <article>
           <strong>Деплой</strong>
