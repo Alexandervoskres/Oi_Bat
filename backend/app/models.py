@@ -81,6 +81,57 @@ class Product(Base):
     import_batch: Mapped[ImportBatch | None] = relationship(back_populates="products")
 
 
+class MovementType(str, enum.Enum):
+    receipt = "receipt"        # приход
+    write_off = "write_off"    # списание
+    sale = "sale"              # продажа
+    adjustment = "adjustment"  # корректировка
+    return_ = "return"         # возврат
+    reserve = "reserve"        # резерв
+
+
+# Sign applied to the request quantity for each movement type. `adjustment`
+# carries its own sign (the correction may be negative).
+MOVEMENT_SIGN = {
+    MovementType.receipt: 1,
+    MovementType.return_: 1,
+    MovementType.sale: -1,
+    MovementType.write_off: -1,
+    MovementType.reserve: -1,
+    MovementType.adjustment: 1,
+}
+
+
+class StockMovement(Base):
+    __tablename__ = "stock_movements"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    product_id: Mapped[int] = mapped_column(ForeignKey("products.id"), index=True)
+    movement_type: Mapped[str] = mapped_column(String(20), index=True)
+    quantity: Mapped[int] = mapped_column(Integer)  # signed delta actually applied
+    stock_before: Mapped[int] = mapped_column(Integer)
+    stock_after: Mapped[int] = mapped_column(Integer)
+    note: Mapped[str] = mapped_column(Text, default="")
+    created_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    created_by_name: Mapped[str] = mapped_column(String(160), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, index=True)
+
+    product: Mapped["Product"] = relationship()
+
+
+class AuditLog(Base):
+    __tablename__ = "audit_logs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    username: Mapped[str] = mapped_column(String(80), default="", index=True)
+    action: Mapped[str] = mapped_column(String(60), index=True)
+    entity_type: Mapped[str] = mapped_column(String(40), default="", index=True)
+    entity_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    detail: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, index=True)
+
+
 class ProductSnapshot(Base):
     __tablename__ = "product_snapshots"
 

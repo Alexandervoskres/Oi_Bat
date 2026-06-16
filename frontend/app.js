@@ -14,9 +14,32 @@ const NAV_ITEMS = [
   { id: "chat", label: "AI-советник", adminOnly: false },
   { id: "imports", label: "Excel и история", adminOnly: false },
   { id: "reports", label: "Отчеты", adminOnly: false },
+  { id: "audit", label: "Аудит", adminOnly: true },
   { id: "users", label: "Пользователи", adminOnly: true },
   { id: "settings", label: "Сервер", adminOnly: false },
 ];
+
+const MOVEMENT_TYPES = [
+  { code: "receipt", label: "Приход" },
+  { code: "write_off", label: "Списание" },
+  { code: "sale", label: "Продажа" },
+  { code: "return", label: "Возврат" },
+  { code: "reserve", label: "Резерв" },
+  { code: "adjustment", label: "Корректировка" },
+];
+
+const MOVEMENT_LABELS = Object.fromEntries(MOVEMENT_TYPES.map((m) => [m.code, m.label]));
+
+const AUDIT_ACTION_LABELS = {
+  "product.create": "Создание товара",
+  "product.update": "Изменение товара",
+  "product.delete": "Удаление товара",
+  "product.risk": "Корректировка риска",
+  "stock.movement": "Движение склада",
+  "user.create": "Создание пользователя",
+  "import.upload": "Импорт Excel",
+  "report.download": "Скачивание отчёта",
+};
 
 const RISK_STATUS_OPTIONS = [
   { code: "", label: "— авто —" },
@@ -86,12 +109,21 @@ const state = {
       role: "manager",
     },
   },
+  audit: {
+    rows: [],
+    loading: false,
+    error: "",
+    filter: { action: "" },
+  },
   modal: {
     open: false,
     mode: "edit", // "edit" | "create"
     product: null,
     saving: false,
     error: "",
+    movements: [],
+    movementSaving: false,
+    movementError: "",
   },
   riskModal: {
     open: false,
@@ -149,6 +181,18 @@ function formatMoney(value) {
 function formatDate(value) {
   if (!value) return "-";
   return new Intl.DateTimeFormat("ru-RU").format(new Date(value));
+}
+
+function formatDateTime(value) {
+  if (!value) return "-";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "-";
+  return new Intl.DateTimeFormat("ru-RU", {
+    day: "2-digit",
+    month: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
 }
 
 function formatChatTime(value) {
@@ -349,6 +393,7 @@ function bindShell() {
       if (state.active === "risks") await loadRisks();
       if (state.active === "procurement") await loadProcurement();
       if (state.active === "imports" && !state.imports.rows.length) await loadImports();
+      if (state.active === "audit") await loadAudit();
       if (state.active === "users" && !state.users.rows.length) await loadUsers();
     });
   });
@@ -366,6 +411,7 @@ function activeTemplate() {
   if (state.active === "chat") return chatTemplate();
   if (state.active === "imports") return importsTemplate();
   if (state.active === "reports") return reportsTemplate();
+  if (state.active === "audit" && state.user.role === "admin") return auditTemplate();
   if (state.active === "users" && state.user.role === "admin") return usersTemplate();
   return settingsTemplate();
 }
@@ -378,6 +424,7 @@ function bindActiveScreen() {
   if (state.active === "chat") bindChat();
   if (state.active === "imports") bindImports();
   if (state.active === "reports") bindReports();
+  if (state.active === "audit" && state.user.role === "admin") bindAudit();
   if (state.active === "users" && state.user.role === "admin") bindUsers();
 }
 
@@ -748,7 +795,10 @@ const BLANK_PRODUCT = {
 };
 
 function openCreateModal() {
-  state.modal = { open: true, mode: "create", product: { ...BLANK_PRODUCT }, saving: false, error: "" };
+  state.modal = {
+    open: true, mode: "create", product: { ...BLANK_PRODUCT },
+    saving: false, error: "", movements: [], movementSaving: false, movementError: "",
+  };
   render();
 }
 
@@ -756,16 +806,36 @@ async function openProductModal(productId) {
   try {
     const response = await api(`/api/products/${productId}`);
     const product = await response.json();
-    state.modal = { open: true, mode: "edit", product, saving: false, error: "" };
+    state.modal = {
+      open: true, mode: "edit", product,
+      saving: false, error: "", movements: [], movementSaving: false, movementError: "",
+    };
     render();
+    loadMovements(productId);
   } catch (error) {
     state.warehouse.error = error.message;
     render();
   }
 }
 
+async function loadMovements(productId) {
+  try {
+    const response = await api(`/api/products/${productId}/movements`);
+    const movements = await response.json();
+    if (state.modal.open && state.modal.product?.id === productId) {
+      state.modal.movements = movements;
+      render();
+    }
+  } catch (_) {
+    // Non-fatal: the card still works without movement history.
+  }
+}
+
 function closeModal() {
-  state.modal = { open: false, mode: "edit", product: null, saving: false, error: "" };
+  state.modal = {
+    open: false, mode: "edit", product: null,
+    saving: false, error: "", movements: [], movementSaving: false, movementError: "",
+  };
   render();
 }
 
@@ -911,8 +981,64 @@ function modalTemplate() {
             </div>
           </div>
         </form>
+
+        ${!isCreate && canRisk ? modalMovementsTemplate(p) : ""}
       </div>
     </div>
+  `;
+}
+
+function modalMovementsTemplate(p) {
+  const movements = state.modal.movements || [];
+  return `
+    <section class="movements-section">
+      <div class="movements-head">
+        <h4>Движения склада</h4>
+        <span>Текущий остаток: <strong>${escapeHtml(p.stock)} шт.</strong></span>
+      </div>
+
+      ${state.modal.movementError ? `<div class="error-box" style="margin-bottom:10px">${escapeHtml(state.modal.movementError)}</div>` : ""}
+
+      <form id="movement-form" class="movement-form">
+        <select id="mv-type">
+          ${MOVEMENT_TYPES.map((m) => `<option value="${m.code}">${escapeHtml(m.label)}</option>`).join("")}
+        </select>
+        <input id="mv-qty" type="number" placeholder="Кол-во" value="1" />
+        <input id="mv-note" type="text" placeholder="Комментарий (необязательно)" />
+        ${button(state.modal.movementSaving ? "..." : "Провести", "button-secondary", `type="submit" ${state.modal.movementSaving ? "disabled" : ""}`)}
+      </form>
+      <small class="movements-hint">Для «Корректировки» можно указать отрицательное количество.</small>
+
+      <div class="movements-list">
+        ${
+          movements.length
+            ? `
+            <table class="data-table movements-table">
+              <thead>
+                <tr><th>Когда</th><th>Тип</th><th>Δ</th><th>Остаток</th><th>Кто</th><th>Комментарий</th></tr>
+              </thead>
+              <tbody>
+                ${movements
+                  .map(
+                    (m) => `
+                    <tr>
+                      <td>${escapeHtml(formatDateTime(m.created_at))}</td>
+                      <td>${escapeHtml(MOVEMENT_LABELS[m.movement_type] || m.movement_type)}</td>
+                      <td class="${m.quantity >= 0 ? "mv-plus" : "mv-minus"}">${m.quantity >= 0 ? "+" : ""}${escapeHtml(m.quantity)}</td>
+                      <td>${escapeHtml(m.stock_after)}</td>
+                      <td>${escapeHtml(m.created_by_name || "—")}</td>
+                      <td>${escapeHtml(m.note || "")}</td>
+                    </tr>
+                  `,
+                  )
+                  .join("")}
+              </tbody>
+            </table>
+          `
+            : `<div class="empty-state" style="min-height:54px">Движений пока нет.</div>`
+        }
+      </div>
+    </section>
   `;
 }
 
@@ -928,6 +1054,7 @@ function bindModal() {
     closeModal();
     deleteProduct(p.id, p.name);
   });
+  document.getElementById("movement-form")?.addEventListener("submit", submitMovement);
 
   const onKey = (e) => {
     if (e.key === "Escape") {
@@ -936,6 +1063,45 @@ function bindModal() {
     }
   };
   document.addEventListener("keydown", onKey);
+}
+
+async function submitMovement(event) {
+  event.preventDefault();
+  const productId = state.modal.product.id;
+  // Read before render() rebuilds the DOM.
+  const body = {
+    movement_type: document.getElementById("mv-type").value,
+    quantity: Number(document.getElementById("mv-qty").value),
+    note: document.getElementById("mv-note").value.trim(),
+  };
+
+  if (!Number.isInteger(body.quantity) || body.quantity === 0) {
+    state.modal.movementError = "Количество должно быть целым числом, не равным нулю.";
+    render();
+    return;
+  }
+
+  state.modal.movementSaving = true;
+  state.modal.movementError = "";
+  render();
+
+  try {
+    await api(`/api/products/${productId}/movements`, { method: "POST", body: JSON.stringify(body) });
+    // Refresh product (stock changed) and movement history.
+    const fresh = await (await api(`/api/products/${productId}`)).json();
+    state.modal.product = fresh;
+    state.modal.movementSaving = false;
+    render();
+    await loadMovements(productId);
+    // Keep warehouse/risks tables and dashboard in sync.
+    const idx = state.warehouse.rows.findIndex((r) => r.id === productId);
+    if (idx !== -1) state.warehouse.rows[idx] = fresh;
+    refreshDashboard();
+  } catch (error) {
+    state.modal.movementSaving = false;
+    state.modal.movementError = error.message;
+    render();
+  }
 }
 
 function readProductForm() {
@@ -2172,6 +2338,88 @@ async function createUser(event) {
     await loadUsers();
   } catch (error) {
     state.users.message = error.message;
+    render();
+  }
+}
+
+// ─── Audit ────────────────────────────────────────────────────────────────────
+
+function auditTemplate() {
+  const model = state.audit;
+  const actions = Object.keys(AUDIT_ACTION_LABELS);
+  return `
+    <section class="screen">
+      <header class="screen-header">
+        <div>
+          <span class="eyebrow">журнал действий</span>
+          <h2>Аудит</h2>
+        </div>
+        <div class="toolbar">
+          <select id="audit-filter-action">
+            <option value="">Все действия</option>
+            ${actions.map((a) => `<option value="${a}" ${model.filter.action === a ? "selected" : ""}>${escapeHtml(AUDIT_ACTION_LABELS[a])}</option>`).join("")}
+          </select>
+          ${button("Обновить", "button-secondary", 'type="button" id="audit-refresh"')}
+        </div>
+      </header>
+
+      ${model.error ? `<div class="error-box" style="margin-bottom:14px">${escapeHtml(model.error)}</div>` : ""}
+
+      <section class="panel">
+        ${
+          model.loading
+            ? `<div class="empty-state">Загружаю журнал...</div>`
+            : model.rows.length
+              ? `
+              <table class="data-table audit-table">
+                <thead>
+                  <tr><th>Когда</th><th>Пользователь</th><th>Действие</th><th>Объект</th><th>Детали</th></tr>
+                </thead>
+                <tbody>
+                  ${model.rows
+                    .map(
+                      (row) => `
+                      <tr>
+                        <td>${escapeHtml(formatDateTime(row.created_at))}</td>
+                        <td>${escapeHtml(row.username || "—")}</td>
+                        <td><span class="audit-action">${escapeHtml(AUDIT_ACTION_LABELS[row.action] || row.action)}</span></td>
+                        <td>${escapeHtml(row.entity_type || "")}${row.entity_id ? ` #${escapeHtml(row.entity_id)}` : ""}</td>
+                        <td class="audit-detail">${escapeHtml(row.detail || "")}</td>
+                      </tr>
+                    `,
+                    )
+                    .join("")}
+                </tbody>
+              </table>
+            `
+              : `<div class="empty-state">Записей пока нет.</div>`
+        }
+      </section>
+    </section>
+  `;
+}
+
+function bindAudit() {
+  document.getElementById("audit-refresh")?.addEventListener("click", loadAudit);
+  document.getElementById("audit-filter-action")?.addEventListener("change", (e) => {
+    state.audit.filter.action = e.target.value;
+    loadAudit();
+  });
+}
+
+async function loadAudit() {
+  state.audit.loading = true;
+  state.audit.error = "";
+  render();
+  try {
+    const params = new URLSearchParams();
+    if (state.audit.filter.action) params.set("action", state.audit.filter.action);
+    const response = await api(`/api/audit?${params.toString()}`);
+    state.audit.rows = await response.json();
+  } catch (error) {
+    state.audit.error = error.message;
+  } finally {
+    state.audit.loading = false;
     render();
   }
 }

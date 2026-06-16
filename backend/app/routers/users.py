@@ -7,6 +7,7 @@ from ..database import get_db
 from ..models import User, UserRole
 from ..schemas import UserCreate, UserOut
 from ..security import hash_password, require_roles
+from ..services.audit import record_audit
 
 
 router = APIRouter(prefix="/api/users", tags=["users"])
@@ -23,7 +24,7 @@ def list_users(
 @router.post("", response_model=UserOut, status_code=status.HTTP_201_CREATED)
 def create_user(
     payload: UserCreate,
-    _: User = Depends(require_roles(UserRole.admin)),
+    actor: User = Depends(require_roles(UserRole.admin)),
     db: Session = Depends(get_db),
 ):
     exists = db.query(User).filter(User.username == payload.username).first()
@@ -38,6 +39,11 @@ def create_user(
         is_active=True,
     )
     db.add(user)
+    db.flush()
+    record_audit(
+        db, actor, "user.create", entity_type="user", entity_id=user.id,
+        detail=f"Создан пользователь {user.username} (роль {user.role.value})", commit=False,
+    )
     db.commit()
     db.refresh(user)
     return user

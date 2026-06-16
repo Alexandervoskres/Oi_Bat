@@ -4,10 +4,12 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from ..models import Product, User, UserRole, utc_now
-from ..schemas import ProductCreate, ProductRiskUpdate, ProductUpdate
+from ..models import Product, StockMovement, User, UserRole, utc_now
+from ..schemas import MovementCreate, MovementOut, ProductCreate, ProductRiskUpdate, ProductUpdate
 from ..security import get_current_user, require_roles
 from ..services.analytics import product_to_dict
+from ..services.audit import record_audit
+from ..services.movements import MOVEMENT_LABELS, apply_movement
 
 
 router = APIRouter(prefix="/api/products", tags=["products"])
@@ -34,7 +36,7 @@ def list_products(
 @router.post("", status_code=201)
 def create_product(
     body: ProductCreate,
-    _: User = Depends(require_roles(UserRole.admin, UserRole.manager)),
+    user: User = Depends(require_roles(UserRole.admin, UserRole.manager)),
     db: Session = Depends(get_db),
 ):
     existing = db.query(Product).filter(Product.sku == body.sku).first()
@@ -43,6 +45,11 @@ def create_product(
 
     product = Product(**body.model_dump())
     db.add(product)
+    db.flush()
+    record_audit(
+        db, user, "product.create", entity_type="product", entity_id=product.id,
+        detail=f"Создан товар {product.sku} «{product.name}»", commit=False,
+    )
     db.commit()
     db.refresh(product)
     return product_to_dict(product)
@@ -80,6 +87,11 @@ def update_product(
     for field, value in updates.items():
         setattr(product, field, value)
 
+    changed = ", ".join(sorted(updates.keys()))
+    record_audit(
+        db, user, "product.update", entity_type="product", entity_id=product.id,
+        detail=f"Изменён товар {product.sku}: поля {changed}", commit=False,
+    )
     db.commit()
     db.refresh(product)
     return product_to_dict(product)
@@ -88,12 +100,16 @@ def update_product(
 @router.delete("/{product_id}", status_code=204)
 def delete_product(
     product_id: int,
-    _: User = Depends(require_roles(UserRole.admin)),
+    user: User = Depends(require_roles(UserRole.admin)),
     db: Session = Depends(get_db),
 ):
     product = db.query(Product).filter(Product.id == product_id).first()
     if not product:
         raise HTTPException(status_code=404, detail="Товар не найден")
+    record_audit(
+        db, user, "product.delete", entity_type="product", entity_id=product.id,
+        detail=f"Удалён товар {product.sku} «{product.name}»", commit=False,
+    )
     db.delete(product)
     db.commit()
     return Response(status_code=204)
@@ -103,7 +119,7 @@ def delete_product(
 def update_risk(
     product_id: int,
     body: ProductRiskUpdate,
-    _: User = Depends(require_roles(UserRole.admin, UserRole.manager)),
+    user: User = Depends(require_roles(UserRole.admin, UserRole.manager)),
     db: Session = Depends(get_db),
 ):
     product = db.query(Product).filter(Product.id == product_id).first()
@@ -119,6 +135,57 @@ def update_risk(
             setattr(product, field, data[field])
 
     product.risk_updated_at = utc_now()
+    record_audit(
+        db, user, "product.risk", entity_type="product", entity_id=product.id,
+        detail=f"Корректировка риска {product.sku}: {', '.join(sorted(data.keys())) or 'без изменений'}",
+        commit=False,
+    )
     db.commit()
     db.refresh(product)
     return product_to_dict(product)
+
+
+@router.get("/{product_id}/movements", response_model=list[MovementOut])
+def list_movements(
+    product_id: int,
+    _: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    product = db.query(Product).filter(Product.id == product_id).first()
+    if not product:
+        raise HTTPException(status_code=404, detail="Товар не найден")
+    return (
+        db.query(StockMovement)
+        .filter(StockMovement.product_id == product_id)
+        .order_by(StockMovement.created_at.desc(), StockMovement.id.desc())
+        .limit(200)
+        .all()
+    )
+
+
+@router.post("/{product_id}/movements", response_model=MovementOut, status_code=201)
+def create_movement(
+    product_id: int,
+    body: MovementCreate,
+    user: User = Depends(require_roles(UserRole.admin, UserRole.manager)),
+    db: Session = Depends(get_db),
+):
+    product = db.query(Product).filter(Product.id == product_id).first()
+    if not product:
+        raise HTTPException(status_code=404, detail="Товар не найден")
+
+    try:
+        movement = apply_movement(db, product, user, body.movement_type, body.quantity, body.note)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    db.flush()
+    label = MOVEMENT_LABELS.get(body.movement_type, body.movement_type)
+    record_audit(
+        db, user, "stock.movement", entity_type="product", entity_id=product.id,
+        detail=f"{label} {movement.quantity:+d} → остаток {movement.stock_after} ({product.sku})",
+        commit=False,
+    )
+    db.commit()
+    db.refresh(movement)
+    return movement

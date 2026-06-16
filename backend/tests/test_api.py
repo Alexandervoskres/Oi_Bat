@@ -412,3 +412,127 @@ def test_dashboard_uses_manual_risk_status():
     assert dashboard.status_code == 200
     urgent_names = [item["name"] for item in dashboard.json()["urgent_actions"]]
     assert "Дашборд риск" in urgent_names
+
+
+# ─── Stock movements ──────────────────────────────────────────────────────────
+
+
+def test_movement_receipt_increases_stock():
+    with TestClient(app) as client:
+        headers = _login(client)
+        created = _create_product(client, headers, "MOV-001", stock=10)
+        response = client.post(
+            f"/api/products/{created['id']}/movements",
+            headers=headers,
+            json={"movement_type": "receipt", "quantity": 5, "note": "Поставка"},
+        )
+        product = client.get(f"/api/products/{created['id']}", headers=headers)
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["quantity"] == 5
+    assert body["stock_before"] == 10
+    assert body["stock_after"] == 15
+    assert product.json()["stock"] == 15
+
+
+def test_movement_sale_decreases_stock_and_lists():
+    with TestClient(app) as client:
+        headers = _login(client)
+        created = _create_product(client, headers, "MOV-002", stock=10)
+        client.post(
+            f"/api/products/{created['id']}/movements",
+            headers=headers,
+            json={"movement_type": "sale", "quantity": 3},
+        )
+        movements = client.get(f"/api/products/{created['id']}/movements", headers=headers)
+
+    assert movements.status_code == 200
+    rows = movements.json()
+    assert len(rows) == 1
+    assert rows[0]["movement_type"] == "sale"
+    assert rows[0]["quantity"] == -3
+    assert rows[0]["stock_after"] == 7
+
+
+def test_movement_cannot_drive_stock_negative():
+    with TestClient(app) as client:
+        headers = _login(client)
+        created = _create_product(client, headers, "MOV-003", stock=2)
+        response = client.post(
+            f"/api/products/{created['id']}/movements",
+            headers=headers,
+            json={"movement_type": "write_off", "quantity": 5},
+        )
+        product = client.get(f"/api/products/{created['id']}", headers=headers)
+
+    assert response.status_code == 400
+    assert product.json()["stock"] == 2  # unchanged
+
+
+def test_movement_adjustment_allows_negative():
+    with TestClient(app) as client:
+        headers = _login(client)
+        created = _create_product(client, headers, "MOV-004", stock=10)
+        response = client.post(
+            f"/api/products/{created['id']}/movements",
+            headers=headers,
+            json={"movement_type": "adjustment", "quantity": -4, "note": "Пересчёт"},
+        )
+
+    assert response.status_code == 201
+    assert response.json()["stock_after"] == 6
+
+
+def test_buyer_cannot_create_movement():
+    with TestClient(app) as client:
+        admin_headers = _login(client)
+        created = _create_product(client, admin_headers, "MOV-005", stock=10)
+        buyer_headers = _ensure_buyer(client, admin_headers)
+        response = client.post(
+            f"/api/products/{created['id']}/movements",
+            headers=buyer_headers,
+            json={"movement_type": "receipt", "quantity": 1},
+        )
+
+    assert response.status_code == 403
+
+
+# ─── Audit log ────────────────────────────────────────────────────────────────
+
+
+def test_audit_records_product_lifecycle():
+    with TestClient(app) as client:
+        headers = _login(client)
+        created = _create_product(client, headers, "AUD-001", name="Аудит товар", stock=5)
+        client.post(
+            f"/api/products/{created['id']}/movements",
+            headers=headers,
+            json={"movement_type": "receipt", "quantity": 2},
+        )
+        audit = client.get("/api/audit", headers=headers)
+
+    assert audit.status_code == 200
+    actions = [row["action"] for row in audit.json()]
+    assert "product.create" in actions
+    assert "stock.movement" in actions
+
+
+def test_audit_admin_only():
+    with TestClient(app) as client:
+        admin_headers = _login(client)
+        buyer_headers = _ensure_buyer(client, admin_headers)
+        response = client.get("/api/audit", headers=buyer_headers)
+
+    assert response.status_code == 403
+
+
+def test_audit_filter_by_action():
+    with TestClient(app) as client:
+        headers = _login(client)
+        _create_product(client, headers, "AUD-FILTER-1", stock=1)
+        response = client.get("/api/audit?action=product.create", headers=headers)
+
+    assert response.status_code == 200
+    assert response.json()
+    assert all(row["action"] == "product.create" for row in response.json())

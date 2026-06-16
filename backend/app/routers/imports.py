@@ -11,6 +11,7 @@ from ..database import get_db
 from ..models import ImportBatch, User, UserRole
 from ..schemas import ImportBatchOut, ImportPreview, UploadResponse
 from ..security import require_roles
+from ..services.audit import record_audit
 from ..services.excel_import import import_products_from_excel, preview_excel_import
 
 
@@ -50,9 +51,18 @@ async def upload_excel(
 
     try:
         result = import_products_from_excel(db, file.file, file.filename, user)
-        return result
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    record_audit(
+        db, user, "import.upload", entity_type="import",
+        entity_id=result["batch"].id,
+        detail=(
+            f"Импорт «{file.filename}»: {result['imported']} строк "
+            f"(новых {result['created']}, обновлено {result['updated']})"
+        ),
+    )
+    return result
 
 
 @router.get("/template.xlsx")

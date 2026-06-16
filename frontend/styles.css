@@ -1626,3 +1626,102 @@ nav {
     margin-left: 0;
   }
 }
+
+/* ── Stock movements (in product card) ─────────────────────────────────────── */
+
+.movements-section {
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+
+.movements-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.movements-head h4 {
+  margin: 0;
+  font-size: 15px;
+  color: var(--yellow);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+.movements-head span {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.movement-form {
+  display: grid;
+  grid-template-columns: 150px 100px 1fr auto;
+  gap: 8px;
+  align-items: stretch;
+}
+
+.movement-form input,
+.movement-form select {
+  min-height: 38px;
+}
+
+.movements-hint {
+  display: block;
+  margin: 6px 0 12px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.movements-list {
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.movements-table th,
+.movements-table td {
+  height: 40px;
+  font-size: 13px;
+}
+
+.mv-plus {
+  color: var(--green);
+  font-weight: 700;
+}
+
+.mv-minus {
+  color: var(--danger);
+  font-weight: 700;
+}
+
+/* ── Audit log ─────────────────────────────────────────────────────────────── */
+
+.audit-action {
+  display: inline-block;
+  padding: 2px 9px;
+  font-size: 12px;
+  font-weight: 600;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  white-space: nowrap;
+}
+
+.audit-detail {
+  color: var(--muted);
+  font-size: 13px;
+  white-space: normal;
+  max-width: 420px;
+}
+
+.audit-table th:nth-child(1) {
+  width: 130px;
+}
+
+@media (max-width: 720px) {
+  .movement-form {
+    grid-template-columns: 1fr 1fr;
+  }
+}

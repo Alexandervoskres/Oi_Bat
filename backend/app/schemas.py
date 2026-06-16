@@ -168,6 +168,39 @@ class AiStatusResponse(BaseModel):
     claude_enabled: bool = False
 
 
+class MovementCreate(BaseModel):
+    movement_type: str = Field(pattern="^(receipt|write_off|sale|adjustment|return|reserve)$")
+    quantity: int = Field(description="Magnitude for typed moves; signed for adjustment")
+    note: str = Field(default="", max_length=2000)
+
+
+class MovementOut(BaseModel):
+    id: int
+    product_id: int
+    movement_type: str
+    quantity: int
+    stock_before: int
+    stock_after: int
+    note: str
+    created_by_name: str
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class AuditOut(BaseModel):
+    id: int
+    user_id: int | None
+    username: str
+    action: str
+    entity_type: str
+    entity_id: int | None
+    detail: str
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
 class ImportPreviewRow(BaseModel):
     row_number: int
     sku: str
