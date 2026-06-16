@@ -7,7 +7,7 @@
 - Backend: Python, FastAPI, SQLAlchemy.
 - База: PostgreSQL через `DATABASE_URL`; для быстрой локальной демонстрации есть fallback SQLite.
 - Frontend: React + HTML + CSS без сборщика, отдается тем же FastAPI-сервером.
-- AI: rule-based рекомендации работают сразу; место для Claude API подготовлено через переменные `CLAUDE_*`.
+- AI: локальный StoreAI-режим работает сразу; внешний AI подключается через агент StoreAI/Claw.
 - Авторизация: логин/пароль, роли `admin`, `manager`, `buyer`.
 - Отчеты: выгрузка PDF по рискам.
 
@@ -112,20 +112,6 @@ Smoke-тесты проверяют логин, дашборд, импорт Exc
 - `manager`: загрузка Excel, склад, дашборд, отчеты.
 - `buyer`: просмотр аналитики, склад, история, отчеты.
 
-## Claude API
-
-Сейчас приложение полностью работает без внешнего AI: статусы и рекомендации считаются по правилам.
-
-Для подключения Claude заполните в `.env`:
-
-```env
-CLAUDE_ENABLED=true
-CLAUDE_API_KEY=your_key_here
-CLAUDE_MODEL=claude-3-5-sonnet-latest
-```
-
-Логика подключения лежит в `backend/app/services/ai_service.py`. Если API недоступен или ключ не задан, backend автоматически вернется к локальным рекомендациям.
-
 ## Claw Code AI-ассистент
 
 StoreAI умеет подключать локальный агент `claw` из соседнего проекта `claw-code-main`.
@@ -148,13 +134,14 @@ CLAW_PERMISSION_MODE=read-only
 CLAW_MODEL=
 ```
 
-3. Передайте ключ провайдера, который использует Claw, например:
+3. Передайте параметры вашего AI-провайдера, например OpenAI-compatible endpoint:
 
 ```env
-ANTHROPIC_API_KEY=your_key_here
+OPENAI_BASE_URL=http://127.0.0.1:11434/v1
+OPENAI_API_KEY=local-or-your-provider-key
 ```
 
-После этого `/api/ai/chat` сначала попробует ответить через Claw Code, а при ошибке вернется к StoreAI/Claude fallback. Статус агента доступен в `/api/ai/status` и отображается в шапке чата.
+После этого `/api/ai/chat` сначала попробует ответить через внешний AI-агент, а если агент недоступен, вернется к локальным правилам StoreAI. Статус агента доступен в `/api/ai/status` и отображается в шапке чата.
 
 ## Подготовка к серверу
 
@@ -164,6 +151,5 @@ ANTHROPIC_API_KEY=your_key_here
 - `DEFAULT_ADMIN_PASSWORD`
 - `DATABASE_URL`
 - `CORS_ORIGINS`
-- `CLAUDE_API_KEY`, если AI будет подключен
 
 Для production лучше запускать backend через `gunicorn`/`uvicorn workers`, а PostgreSQL держать отдельно или через управляемый сервис.

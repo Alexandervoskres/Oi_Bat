@@ -59,13 +59,6 @@ class Settings:
     default_admin_username: str = os.getenv("DEFAULT_ADMIN_USERNAME", "admin")
     default_admin_password: str = os.getenv("DEFAULT_ADMIN_PASSWORD", "admin123")
     default_admin_full_name: str = os.getenv("DEFAULT_ADMIN_FULL_NAME", "Администратор")
-    claude_enabled: bool = _env_bool("CLAUDE_ENABLED")
-    claude_api_key: str = os.getenv("CLAUDE_API_KEY", "")
-    claude_model: str = os.getenv("CLAUDE_MODEL", "claude-3-5-sonnet-latest")
-    claude_api_url: str = os.getenv(
-        "CLAUDE_API_URL",
-        "https://api.anthropic.com/v1/messages",
-    )
     claw_agent_enabled: bool = _env_bool("CLAW_AGENT_ENABLED")
     claw_binary_path: str = os.getenv(
         "CLAW_BINARY_PATH",

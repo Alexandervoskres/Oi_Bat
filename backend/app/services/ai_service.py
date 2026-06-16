@@ -1,9 +1,7 @@
 from __future__ import annotations
 
-import json
 import math
 import re
-import urllib.request
 
 from sqlalchemy.orm import Session
 
@@ -36,61 +34,9 @@ def _rule_based_summary(products: list[Product]) -> str:
     return " ".join(fragments) if fragments else "Критических отклонений нет: склад можно вести по текущему плану."
 
 
-def _call_claude(prompt: str) -> str | None:
-    if not settings.claude_enabled or not settings.claude_api_key:
-        return None
-
-    payload = {
-        "model": settings.claude_model,
-        "max_tokens": 500,
-        "messages": [{"role": "user", "content": prompt}],
-    }
-    request = urllib.request.Request(
-        settings.claude_api_url,
-        data=json.dumps(payload).encode("utf-8"),
-        headers={
-            "content-type": "application/json",
-            "x-api-key": settings.claude_api_key,
-            "anthropic-version": "2023-06-01",
-        },
-        method="POST",
-    )
-
-    try:
-        with urllib.request.urlopen(request, timeout=20) as response:
-            data = json.loads(response.read().decode("utf-8"))
-        content = data.get("content", [])
-        if content and isinstance(content, list):
-            return content[0].get("text")
-    except Exception:
-        return None
-    return None
-
-
 def build_ai_summary(db: Session) -> str:
     products = db.query(Product).order_by(Product.updated_at.desc()).limit(80).all()
-    if not settings.claude_enabled:
-        return _rule_based_summary(products)
-
-    compact = [
-        {
-            "name": product.name,
-            "category": product.category,
-            "stock": product.stock,
-            "sold_month": product.sold_month,
-            "avg_monthly_sales": product.avg_monthly_sales,
-            "last_sale_date": product.last_sale_date.isoformat() if product.last_sale_date else None,
-            "signal": product_signal(product)["status"],
-        }
-        for product in products
-    ]
-    prompt = (
-        "Ты AI-советник для склада строительных инструментов. "
-        "Коротко, по-русски, в 2-3 предложениях дай управленческую рекомендацию. "
-        "Не выдумывай данные, опирайся только на JSON.\n\n"
-        f"{json.dumps(compact, ensure_ascii=False)}"
-    )
-    return _call_claude(prompt) or _rule_based_summary(products)
+    return _rule_based_summary(products)
 
 
 def _recommended_qty(product: Product) -> int:
@@ -239,7 +185,7 @@ def _looks_like_warehouse_question(message: str) -> bool:
 
 
 def _rule_based_chat(message: str, products: list[Product]) -> dict:
-    """Answer common warehouse questions without calling Claude."""
+    """Answer common warehouse questions when the external agent is unavailable."""
     msg = message.lower().strip()
     signals = [(p, product_signal(p)) for p in products if not p.excluded_from_ai]
     urgent = [
@@ -447,16 +393,6 @@ def _trim_history(history: list[dict] | None) -> list[dict]:
     return cleaned[-turns:]
 
 
-def _format_history_for_claude(history: list[dict]) -> str:
-    if not history:
-        return ""
-    lines = []
-    for turn in history:
-        role = "Пользователь" if turn["role"] == "user" else "Ассистент"
-        lines.append(f"{role}: {turn['content']}")
-    return "Предыдущий диалог (контекст для уточнений):\n" + "\n".join(lines) + "\n\n"
-
-
 def chat_with_ai(db: Session, message: str, history: list[dict] | None = None) -> dict:
     products = db.query(Product).order_by(Product.updated_at.desc()).limit(120).all()
     context_products = [p for p in products if not p.excluded_from_ai]
@@ -474,38 +410,6 @@ def chat_with_ai(db: Session, message: str, history: list[dict] | None = None) -
             source="claw",
         )
 
-    if not settings.claude_enabled or not settings.claude_api_key:
-        return _with_agent_meta(_rule_based_chat(message, products), "StoreAI", "rule_based")
-
-    compact = _compact_product_context(context_products)
-
-    system = (
-        "Ты AI-советник для склада строительных инструментов. "
-        "Отвечай только по-русски, кратко и конкретно. "
-        "Используй только данные из JSON-контекста — не выдумывай товары. "
-        "Если товара нет в данных — честно скажи об этом. "
-        "При вопросе о бюджете учитывай purchase_price и рекомендуй количество. "
-        "Отвечай практично: списки, цифры, действия. "
-        "Учитывай предыдущий диалог при уточняющих вопросах."
-    )
-    prompt = (
-        f"{system}\n\nКонтекст склада:\n"
-        f"{json.dumps(compact, ensure_ascii=False, separators=(',', ':'))}\n\n"
-        f"{_format_history_for_claude(history)}"
-        f"Текущий вопрос: {message}"
-    )
-
-    answer = _call_claude(prompt)
-    if answer:
-        return _with_agent_meta(
-            {
-                "answer": answer,
-                "suggested_actions": _actions_from_agent_answer(answer),
-                "used_products": _products_mentioned_in_answer(answer, context_products),
-            },
-            "Claude API",
-            "claude",
-        )
     return _with_agent_meta(_rule_based_chat(message, products), "StoreAI", "rule_based")
 
 
@@ -513,13 +417,10 @@ def ai_status() -> dict:
     claw = claw_agent_status()
     if claw["available"]:
         active_agent = "Claw Code"
-    elif settings.claude_enabled and settings.claude_api_key:
-        active_agent = "Claude API"
     else:
         active_agent = "StoreAI"
     return {
         "active_agent": active_agent,
         "fallback_agent": "StoreAI",
         "claw": claw,
-        "claude_enabled": bool(settings.claude_enabled and settings.claude_api_key),
     }

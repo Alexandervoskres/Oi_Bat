@@ -4,7 +4,6 @@ from io import BytesIO
 import os
 from pathlib import Path
 import tempfile
-from types import SimpleNamespace
 from unittest.mock import patch
 
 import pandas as pd
@@ -344,7 +343,7 @@ def test_ai_status_contract():
 
     assert response.status_code == 200
     body = response.json()
-    assert body["active_agent"] in {"StoreAI", "Claude API", "Claw Code"}
+    assert body["active_agent"] in {"StoreAI", "Claw Code"}
     assert "claw" in body
     assert {"enabled", "available", "state", "binary_path"}.issubset(body["claw"])
 
@@ -540,7 +539,7 @@ def test_audit_filter_by_action():
     assert all(row["action"] == "product.create" for row in response.json())
 
 
-# ─── AI agent cascade (Claw -> Claude -> rule-based) ──────────────────────────
+# ─── AI agent cascade (Claw -> StoreAI rules) ─────────────────────────────────
 
 from backend.app.services.claw_agent import ClawAgentResult  # noqa: E402
 
@@ -595,31 +594,11 @@ def test_chat_excludes_flagged_products_from_agent_context():
     assert visible["id"] != hidden["id"]
 
 
-def test_chat_falls_back_to_claude_when_claw_silent():
-    fake_settings = SimpleNamespace(claude_enabled=True, claude_api_key="x", ai_history_turns=6)
-    with TestClient(app) as client:
-        headers = _login(client)
-        _create_product(client, headers, "CLD-1", name="Клод товар", stock=0, sold_month=5)
-        with patch(
-            "backend.app.services.ai_service.call_claw_agent",
-            return_value=ClawAgentResult(answer=None),
-        ), patch("backend.app.services.ai_service.settings", fake_settings), patch(
-            "backend.app.services.ai_service._call_claude",
-            return_value="Ответ Клод: закажите Клод товар",
-        ):
-            response = client.post("/api/ai/chat", headers=headers, json={"message": "что заказать?"})
-
-    body = response.json()
-    assert body["source"] == "claude"
-    assert body["agent"] == "Claude API"
-    assert "Клод товар" in body["used_products"]
-
-
-def test_chat_falls_back_to_rule_based_when_claw_and_claude_unavailable():
+def test_chat_falls_back_to_rule_based_when_claw_unavailable():
     with TestClient(app) as client:
         headers = _login(client)
         _create_product(client, headers, "RB-1", name="Правило товар", stock=0, sold_month=5)
-        # claw returns nothing; claude stays disabled (default test env) -> rule-based.
+        # External agent returns nothing, so StoreAI answers with local warehouse rules.
         with patch(
             "backend.app.services.ai_service.call_claw_agent",
             return_value=ClawAgentResult(answer=None),

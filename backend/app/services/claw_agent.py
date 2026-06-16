@@ -71,8 +71,6 @@ def _probe_claw_agent_status() -> dict:
     provider_configured = any(
         os.getenv(name)
         for name in [
-            "ANTHROPIC_API_KEY",
-            "ANTHROPIC_AUTH_TOKEN",
             "OPENAI_API_KEY",
             "OPENAI_BASE_URL",
             "OLLAMA_HOST",
@@ -98,7 +96,7 @@ def _probe_claw_agent_status() -> dict:
     if not binary_exists:
         setup_steps.append("Run: cd ../claw-code-main/rust && cargo build --workspace")
     if not provider_configured:
-        setup_steps.append("Set ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, OPENAI_BASE_URL, or OLLAMA_HOST")
+        setup_steps.append("Set OPENAI_API_KEY, OPENAI_BASE_URL, or OLLAMA_HOST for your AI provider")
 
     return {
         "enabled": enabled,

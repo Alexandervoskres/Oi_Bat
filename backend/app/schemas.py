@@ -168,7 +168,6 @@ class AiStatusResponse(BaseModel):
     active_agent: str
     fallback_agent: str = "StoreAI"
     claw: dict
-    claude_enabled: bool = False
 
 
 class SupplierBase(BaseModel):
