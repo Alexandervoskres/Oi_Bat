@@ -114,34 +114,50 @@ Smoke-тесты проверяют логин, дашборд, импорт Exc
 
 ## Claw Code AI-ассистент
 
-StoreAI умеет подключать локальный агент `claw` из соседнего проекта `claw-code-main`.
-Если агент не собран или не настроен, чат продолжит работать через локальные рекомендации.
+StoreAI подключает агент `claw` из соседнего проекта `claw-code-main` и через него —
+вашу собственную модель. Если модель ещё не подключена, чат работает на локальных
+правилах StoreAI (приложение полностью функционально без модели).
 
-1. Соберите Claw Code:
+**1. Сборка Claw** (нужен Rust/Cargo — `winget install Rustlang.Rustup`):
 
 ```powershell
 cd ..\claw-code-main\rust
-cargo build --workspace
+cargo build --workspace   # -> target\debug\claw.exe
 ```
 
-2. В `.env` StoreAI включите адаптер:
+**2. Включение адаптера** в `.env` StoreAI (см. `.env.example`):
 
 ```env
 CLAW_AGENT_ENABLED=true
 CLAW_BINARY_PATH=../claw-code-main/rust/target/debug/claw.exe
 CLAW_WORKSPACE=.
 CLAW_PERMISSION_MODE=read-only
-CLAW_MODEL=
 ```
 
-3. Передайте параметры вашего AI-провайдера, например OpenAI-compatible endpoint:
+На этом этапе `/api/ai/status` показывает `state=missing_provider` — бинарь найден,
+осталось указать модель.
+
+**3. Подключение модели** — выберите ОДИН вариант и добавьте в `.env`:
 
 ```env
+# Префикс модели задаёт провайдера для Claw
+CLAW_MODEL=openai/qwen2.5-7b-instruct
+
+# A) Локальная модель на этой машине (например, Ollama в OpenAI-режиме):
 OPENAI_BASE_URL=http://127.0.0.1:11434/v1
-OPENAI_API_KEY=local-or-your-provider-key
+OPENAI_API_KEY=local
+
+# B) Удалённый сервер (ваш будущий сервер) — те же переменные, реальный хост:
+# OPENAI_BASE_URL=https://your-server.example.com/v1
+# OPENAI_API_KEY=your-server-token
+
+# C) Нативный Ollama вместо OpenAI-режима:
+# OLLAMA_HOST=http://127.0.0.1:11434
 ```
 
-После этого `/api/ai/chat` сначала попробует ответить через внешний AI-агент, а если агент недоступен, вернется к локальным правилам StoreAI. Статус агента доступен в `/api/ai/status` и отображается в шапке чата.
+После этого `/api/ai/chat` сперва идёт в Claw → вашу модель, а при недоступности
+агента возвращается к локальным правилам StoreAI. Статус виден в `/api/ai/status`
+и в шапке чата. Проверка из CLI: `..\claw-code-main\rust\target\debug\claw.exe doctor`.
 
 ## Подготовка к серверу
 
