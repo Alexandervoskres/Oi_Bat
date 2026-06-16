@@ -26,36 +26,35 @@ def get_db():
         db.close()
 
 
-def _apply_migrations() -> None:
-    """Add columns that may not exist in databases created before schema updates."""
-    from sqlalchemy import text
+def _alembic_config():
+    from pathlib import Path
 
-    new_columns = [
-        ("products", "do_not_order", "BOOLEAN NOT NULL DEFAULT 0"),
-        ("products", "is_seasonal", "BOOLEAN NOT NULL DEFAULT 0"),
-        ("products", "is_on_demand", "BOOLEAN NOT NULL DEFAULT 0"),
-        ("products", "risk_status_override", "VARCHAR(40)"),
-        ("products", "risk_priority", "VARCHAR(20)"),
-        ("products", "risk_note", "TEXT NOT NULL DEFAULT ''"),
-        ("products", "excluded_from_ai", "BOOLEAN NOT NULL DEFAULT 0"),
-        ("products", "risk_resolved_at", "DATETIME"),
-        ("products", "risk_updated_at", "DATETIME"),
-    ]
-    with engine.connect() as conn:
-        for table, col, definition in new_columns:
-            try:
-                conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {definition}"))
-                conn.commit()
-            except Exception:
-                pass  # column already exists
+    from alembic.config import Config
+
+    backend_dir = Path(__file__).resolve().parents[1]
+    cfg = Config(str(backend_dir / "alembic.ini"))
+    cfg.set_main_option("script_location", str(backend_dir / "migrations"))
+    cfg.set_main_option("sqlalchemy.url", settings.database_url)
+    return cfg
+
+
+def run_migrations() -> None:
+    """Bring the database schema up to the latest Alembic revision.
+
+    This is the single source of truth for schema management. The baseline
+    revision builds the full schema from the models, so a fresh database is
+    created entirely through migrations.
+    """
+    from alembic import command
+
+    command.upgrade(_alembic_config(), "head")
 
 
 def init_db() -> None:
     from . import models  # noqa: F401
     from .services.initial_data import ensure_default_admin
 
-    Base.metadata.create_all(bind=engine)
-    _apply_migrations()
+    run_migrations()
 
     db = SessionLocal()
     try:

@@ -55,6 +55,28 @@ python -m venv .venv
 .\.venv\Scripts\python.exe -m uvicorn backend.app.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
+## Миграции базы данных
+
+Схема управляется через Alembic. При старте приложение само прогоняет
+`alembic upgrade head` (см. `init_db` в `backend/app/database.py`), поэтому для
+обычного запуска ничего делать не нужно — база создаётся из миграций.
+
+Базовая миграция строит всю текущую схему из моделей. При изменении моделей
+создавайте новую ревизию:
+
+```powershell
+# сгенерировать ревизию по изменениям моделей
+.\.venv\Scripts\python.exe -m alembic -c backend\alembic.ini revision --autogenerate -m "describe change"
+# применить
+.\.venv\Scripts\python.exe -m alembic -c backend\alembic.ini upgrade head
+# текущая версия / история
+.\.venv\Scripts\python.exe -m alembic -c backend\alembic.ini current
+.\.venv\Scripts\python.exe -m alembic -c backend\alembic.ini history
+```
+
+URL базы Alembic берёт из настроек приложения (`DATABASE_URL`), отдельно его
+прописывать в `alembic.ini` не нужно.
+
 ## Проверка проекта
 
 ```powershell
