@@ -928,3 +928,21 @@ def test_order_create_is_audited():
         audit = client.get("/api/audit?action=order.create", headers=headers).json()
 
     assert audit
+
+
+def test_import_auto_links_supplier_by_name():
+    with TestClient(app) as client:
+        headers = _login(client)
+        sup = client.post("/api/suppliers", headers=headers, json={"name": "Makita"}).json()
+        content = _xlsx_bytes([{
+            "Артикул": "LINK-1", "Название товара": "Дрель Makita", "Остаток": 5,
+            "Продано за месяц": 3, "Продажная цена": 6000, "Поставщик": "makita",
+        }])
+        client.post(
+            "/api/imports/upload", headers=headers,
+            files={"file": ("s.xlsx", content, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+        )
+        products = client.get("/api/products?search=LINK-1", headers=headers).json()
+
+    linked = next(p for p in products if p["sku"] == "LINK-1")
+    assert linked["supplier_id"] == sup["id"]  # case-insensitive name match

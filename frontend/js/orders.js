@@ -87,6 +87,9 @@ function ordersTemplate() {
                                 </tbody>
                               </table>
                               ${order.note ? `<div class="order-note">Комментарий: ${escapeHtml(order.note)}</div>` : ""}
+                              <div style="margin-top:10px">
+                                ${button("Скачать заказ (CSV)", "button-secondary button-sm btn-order-csv", `type="button" data-id="${order.id}"`)}
+                              </div>
                             </td></tr>`
                           : ""
                       }
@@ -119,6 +122,33 @@ function bindOrders() {
   document.querySelectorAll(".btn-order-delete").forEach((btn) => {
     btn.addEventListener("click", () => deleteOrder(Number(btn.dataset.id)));
   });
+  document.querySelectorAll(".btn-order-csv").forEach((btn) => {
+    btn.addEventListener("click", () => exportOrderCsv(Number(btn.dataset.id)));
+  });
+}
+
+function exportOrderCsv(id) {
+  const order = state.orders.rows.find((o) => o.id === id);
+  if (!order) return;
+  const headers = ["Артикул", "Товар", "Кол-во", "Цена закупки", "Сумма"];
+  const lines = [
+    `Заказ #${order.id};Поставщик: ${order.supplier_name || "—"};Статус: ${order.status}`,
+    headers.join(";"),
+  ];
+  for (const i of order.items) {
+    lines.push([i.sku, i.name, i.quantity, i.purchase_price, i.line_total.toFixed(2)]
+      .map((v) => `"${String(v).replace(/"/g, '""')}"`).join(";"));
+  }
+  lines.push(`;;;Итого:;${order.total_amount.toFixed(2)}`);
+  const blob = new Blob(["﻿" + lines.join("\n")], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `zakaz-${order.id}.csv`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
 }
 
 async function loadOrders() {

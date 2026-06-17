@@ -9,7 +9,7 @@ from typing import BinaryIO
 import pandas as pd
 from sqlalchemy.orm import Session
 
-from ..models import ImportBatch, Product, ProductSnapshot, User
+from ..models import ImportBatch, Product, ProductSnapshot, Supplier, User
 
 
 COLUMN_ALIASES = {
@@ -226,6 +226,10 @@ def import_products_from_excel(db: Session, file: BinaryIO, filename: str, user:
     updated = 0
     imported = 0
 
+    # Map supplier name -> id once so import can auto-link products to the
+    # suppliers directory (case-insensitive match on the "Поставщик" column).
+    supplier_map = {s.name.strip().lower(): s.id for s in db.query(Supplier).all()}
+
     try:
         batch = ImportBatch(filename=filename, rows_count=0, created_by_id=user.id)
         db.add(batch)
@@ -308,6 +312,10 @@ def import_products_from_excel(db: Session, file: BinaryIO, filename: str, user:
                 else None
             )
             product.supplier = _clean_text(row[columns["supplier"]]) if "supplier" in columns else ""
+            if product.supplier:
+                matched = supplier_map.get(product.supplier.strip().lower())
+                if matched:
+                    product.supplier_id = matched
             product.min_stock = (
                 _clean_int(
                     row[columns["min_stock"]],
