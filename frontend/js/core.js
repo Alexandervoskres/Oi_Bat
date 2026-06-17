@@ -246,6 +246,15 @@ function button(label, className = "", attrs = "") {
   return `<button ${attrs} class="button ${className}"><span>${escapeHtml(label)}</span></button>`;
 }
 
+// Quote a value for CSV and neutralize spreadsheet formula injection: a cell
+// starting with = + - @ (or tab/CR) is prefixed with ' so Excel/Sheets treats
+// it as text, not a formula.
+function csvCell(value) {
+  let s = String(value ?? "");
+  if (/^[=+\-@\t\r]/.test(s)) s = "'" + s;
+  return `"${s.replace(/"/g, '""')}"`;
+}
+
 async function api(path, options = {}) {
   const headers = new Headers(options.headers || {});
   if (state.token) headers.set("Authorization", `Bearer ${state.token}`);

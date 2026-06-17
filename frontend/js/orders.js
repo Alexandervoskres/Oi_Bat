@@ -137,7 +137,7 @@ function exportOrderCsv(id) {
   ];
   for (const i of order.items) {
     lines.push([i.sku, i.name, i.quantity, i.purchase_price, i.line_total.toFixed(2)]
-      .map((v) => `"${String(v).replace(/"/g, '""')}"`).join(";"));
+      .map(csvCell).join(";"));
   }
   lines.push(`;;;Итого:;${order.total_amount.toFixed(2)}`);
   const blob = new Blob(["﻿" + lines.join("\n")], { type: "text/csv;charset=utf-8;" });

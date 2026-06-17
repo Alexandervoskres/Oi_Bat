@@ -177,7 +177,7 @@ function exportProcurementCsv() {
       r.purchase_price,
       (qty * r.purchase_price).toFixed(2),
       r.status,
-    ].map((v) => `"${String(v).replace(/"/g, '""')}"`).join(";"));
+    ].map(csvCell).join(";"));
   }
 
   const bom = "﻿";
