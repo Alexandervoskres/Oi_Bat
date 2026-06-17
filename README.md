@@ -7,7 +7,7 @@
 - Backend: Python, FastAPI, SQLAlchemy.
 - База: PostgreSQL через `DATABASE_URL`; для быстрой локальной демонстрации есть fallback SQLite.
 - Frontend: React + HTML + CSS без сборщика, отдается тем же FastAPI-сервером.
-- AI: локальный StoreAI-режим работает сразу; внешний AI подключается через агент StoreAI/Claw.
+- AI: локальный StoreAI-режим работает сразу; для открытых вопросов подключается локальная модель через Ollama (со стримингом).
 - Авторизация: логин/пароль, роли `admin`, `manager`, `buyer`.
 - Отчеты: выгрузка PDF по рискам.
 
@@ -112,52 +112,38 @@ Smoke-тесты проверяют логин, дашборд, импорт Exc
 - `manager`: загрузка Excel, склад, дашборд, отчеты.
 - `buyer`: просмотр аналитики, склад, история, отчеты.
 
-## Claw Code AI-ассистент
+## AI-ассистент (локальная модель через Ollama)
 
-StoreAI подключает агент `claw` из соседнего проекта `claw-code-main` и через него —
-вашу собственную модель. Если модель ещё не подключена, чат работает на локальных
-правилах StoreAI (приложение полностью функционально без модели).
+Чат всегда работает на локальных правилах StoreAI (мгновенно, без модели).
+Открытые/аналитические вопросы дополнительно идут в **локальную модель через
+[Ollama](https://ollama.com)** — напрямую, без посредников. Если Ollama не
+запущена, чат остаётся на правилах: приложение полностью функционально без модели.
 
-**1. Сборка Claw** (нужен Rust/Cargo — `winget install Rustlang.Rustup`):
+**1. Установить Ollama и скачать модель:**
 
 ```powershell
-cd ..\claw-code-main\rust
-cargo build --workspace   # -> target\debug\claw.exe
+ollama pull qwen3:latest
+ollama serve   # обычно уже запущена как сервис на http://127.0.0.1:11434
 ```
 
-**2. Включение адаптера** в `.env` StoreAI (см. `.env.example`):
+**2. Указать в `.env` StoreAI** (см. `.env.example`):
 
 ```env
-CLAW_AGENT_ENABLED=true
-CLAW_BINARY_PATH=../claw-code-main/rust/target/debug/claw.exe
-CLAW_WORKSPACE=.
-CLAW_PERMISSION_MODE=read-only
+OLLAMA_HOST=http://127.0.0.1:11434
+AI_MODEL=qwen3:latest
+AI_NO_THINK=true          # для qwen3: отключает «размышления» — ~2x быстрее и без срывов
+AI_TIMEOUT_SECONDS=120
 ```
 
-На этом этапе `/api/ai/status` показывает `state=missing_provider` — бинарь найден,
-осталось указать модель.
+После этого:
+- `/api/ai/chat/stream` (SSE) — потоковый ответ модели по токенам (это использует чат в UI);
+- `/api/ai/chat` — тот же ответ, но целиком;
+- `/api/ai/status` — показывает `ollama.available` и имя модели (видно в шапке чата).
 
-**3. Подключение модели** — выберите ОДИН вариант и добавьте в `.env`:
-
-```env
-# Префикс модели задаёт провайдера для Claw
-CLAW_MODEL=openai/qwen2.5-7b-instruct
-
-# A) Локальная модель на этой машине (например, Ollama в OpenAI-режиме):
-OPENAI_BASE_URL=http://127.0.0.1:11434/v1
-OPENAI_API_KEY=local
-
-# B) Удалённый сервер (ваш будущий сервер) — те же переменные, реальный хост:
-# OPENAI_BASE_URL=https://your-server.example.com/v1
-# OPENAI_API_KEY=your-server-token
-
-# C) Нативный Ollama вместо OpenAI-режима:
-# OLLAMA_HOST=http://127.0.0.1:11434
-```
-
-После этого `/api/ai/chat` сперва идёт в Claw → вашу модель, а при недоступности
-агента возвращается к локальным правилам StoreAI. Статус виден в `/api/ai/status`
-и в шапке чата. Проверка из CLI: `..\claw-code-main\rust\target\debug\claw.exe doctor`.
+Проверка модели напрямую: `curl http://127.0.0.1:11434/api/tags` (должна вернуть список
+моделей). Реасонинг-модели (как qwen3) на большом контексте отвечают не мгновенно —
+первый токен может идти ~15-20 сек, это нормально; стриминг показывает ответ по мере
+генерации.
 
 ## Подготовка к серверу
 

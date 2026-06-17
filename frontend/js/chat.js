@@ -40,14 +40,12 @@ function chatActionTarget(action) {
 function chatAgentStatusTemplate(model) {
   const status = model.status;
   const activeAgent = model.statusLoading ? "Проверяю..." : "AI-ассистент";
-  const claw = status?.claw;
-  let stateText = "локальный";
+  const ollama = status?.ollama;
+  let stateText = "локальный режим";
   let stateClass = "local";
-  if (claw?.available) {
-    stateText = "подключен";
+  if (ollama?.available) {
+    stateText = `модель ${ollama.model || "подключена"}`;
     stateClass = "online";
-  } else if (claw?.enabled) {
-    stateText = "локальный режим";
   }
   return `
     <div class="chat-agent-status chat-agent-${stateClass}">
@@ -375,7 +373,7 @@ async function loadAiStatus() {
     state.chat.status = {
       active_agent: "StoreAI",
       fallback_agent: "StoreAI",
-      claw: { enabled: false, available: false, state: "unknown" },
+      ollama: { available: false, host: "", model: "" },
     };
   } finally {
     state.chat.statusLoading = false;

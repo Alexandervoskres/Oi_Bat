@@ -59,32 +59,18 @@ class Settings:
     default_admin_username: str = os.getenv("DEFAULT_ADMIN_USERNAME", "admin")
     default_admin_password: str = os.getenv("DEFAULT_ADMIN_PASSWORD", "admin123")
     default_admin_full_name: str = os.getenv("DEFAULT_ADMIN_FULL_NAME", "Администратор")
-    claw_agent_enabled: bool = _env_bool("CLAW_AGENT_ENABLED")
-    claw_binary_path: str = os.getenv(
-        "CLAW_BINARY_PATH",
-        str(ROOT_DIR.parent / "claw-code-main" / "rust" / "target" / "debug" / "claw.exe"),
-    )
-    claw_workspace: str = os.getenv("CLAW_WORKSPACE", str(ROOT_DIR))
-    claw_model: str = os.getenv("CLAW_MODEL", "")
-    claw_permission_mode: str = os.getenv("CLAW_PERMISSION_MODE", "read-only")
-    claw_timeout_seconds: int = _env_int("CLAW_TIMEOUT_SECONDS", 45)
-    # Max Claw subprocesses running at once; extra requests fall back instead of
-    # piling up and exhausting the request threadpool.
-    claw_max_concurrent: int = _env_int("CLAW_MAX_CONCURRENT", 2)
-    # How long an extra request waits for a free Claw slot before falling back.
-    claw_acquire_timeout_seconds: int = _env_int("CLAW_ACQUIRE_TIMEOUT_SECONDS", 2)
-    # Cache the agent status probe (filesystem + env checks) for this long.
-    claw_status_cache_seconds: int = _env_int("CLAW_STATUS_CACHE_SECONDS", 30)
+    # ── AI assistant (local model via Ollama) ───────────────────────────────
+    # The chat talks to Ollama directly (streaming + non-streaming). Old CLAW_*
+    # env names are still read as a fallback so existing .env files keep working.
+    ollama_host: str = os.getenv("OLLAMA_HOST", "")
+    ai_model: str = os.getenv("AI_MODEL") or os.getenv("CLAW_MODEL", "")
+    ai_timeout_seconds: int = _env_int("AI_TIMEOUT_SECONDS", _env_int("CLAW_TIMEOUT_SECONDS", 120))
+    ai_num_predict: int = _env_int("AI_NUM_PREDICT", 600)
     # Number of recent chat turns forwarded to the model for follow-up context.
     ai_history_turns: int = _env_int("AI_HISTORY_TURNS", 6)
-    # Append /no_think to the agent prompt (qwen3): ~halves latency and stops
-    # the model wandering into tool calls. Harmless for models that ignore it.
-    claw_no_think: bool = _env_bool("CLAW_NO_THINK", True)
-    # Direct Ollama streaming for chat (token-by-token). Uses the same model as
-    # Claw (CLAW_MODEL) but talks to Ollama's API directly, since Claw buffers
-    # its output and can't stream. Empty OLLAMA_HOST disables the streaming path.
-    ollama_host: str = os.getenv("OLLAMA_HOST", "")
-    ai_num_predict: int = _env_int("AI_NUM_PREDICT", 600)
+    # Append /no_think to the prompt (qwen3): ~halves latency and stops the model
+    # wandering into tool calls. Harmless for models that ignore it.
+    ai_no_think: bool = _env_bool("AI_NO_THINK", _env_bool("CLAW_NO_THINK", True))
 
     @property
     def is_production(self) -> bool:

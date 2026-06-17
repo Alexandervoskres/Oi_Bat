@@ -182,7 +182,7 @@ class ChatResponse(BaseModel):
 class AiStatusResponse(BaseModel):
     active_agent: str
     fallback_agent: str = "StoreAI"
-    claw: dict
+    ollama: dict
 
 
 class SupplierBase(BaseModel):
