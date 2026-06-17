@@ -836,3 +836,95 @@ def test_import_creates_notification():
         notes = client.get("/api/notifications", headers=headers).json()
 
     assert any(n["type"] == "import_warning" for n in notes["items"])
+
+
+# ─── Purchase orders ──────────────────────────────────────────────────────────
+
+
+def test_order_from_plan_groups_by_supplier():
+    with TestClient(app) as client:
+        headers = _login(client)
+        sup = client.post("/api/suppliers", headers=headers, json={"name": "OrderSup"}).json()
+        p1 = _create_product(client, headers, "ORD-P1", supplier_id=sup["id"], purchase_price=100)
+        p2 = _create_product(client, headers, "ORD-P2", supplier_id=sup["id"], purchase_price=50)
+        p3 = _create_product(client, headers, "ORD-P3", purchase_price=10)  # no supplier
+        resp = client.post(
+            "/api/orders/from-plan",
+            headers=headers,
+            json={"items": [
+                {"product_id": p1["id"], "quantity": 3},
+                {"product_id": p2["id"], "quantity": 2},
+                {"product_id": p3["id"], "quantity": 5},
+            ]},
+        )
+
+    assert resp.status_code == 201
+    orders = resp.json()
+    # One order for OrderSup (p1+p2), one for the no-supplier item.
+    assert len(orders) == 2
+    sup_order = next(o for o in orders if o["supplier_name"] == "OrderSup")
+    assert sup_order["item_count"] == 2
+    assert sup_order["total_amount"] == 400  # 3*100 + 2*50
+    assert sup_order["status"] == "draft"
+
+
+def test_order_received_creates_receipt_movement():
+    with TestClient(app) as client:
+        headers = _login(client)
+        p = _create_product(client, headers, "ORD-RCV", stock=5, purchase_price=100)
+        order = client.post(
+            "/api/orders/from-plan",
+            headers=headers,
+            json={"items": [{"product_id": p["id"], "quantity": 7}]},
+        ).json()[0]
+        # draft -> sent -> received
+        client.patch(f"/api/orders/{order['id']}/status", headers=headers, json={"status": "sent"})
+        recv = client.patch(f"/api/orders/{order['id']}/status", headers=headers, json={"status": "received"})
+        product = client.get(f"/api/products/{p['id']}", headers=headers).json()
+        movements = client.get(f"/api/products/{p['id']}/movements", headers=headers).json()
+
+    assert recv.status_code == 200
+    assert recv.json()["status"] == "received"
+    assert recv.json()["received_at"] is not None
+    assert product["stock"] == 12  # 5 + 7 received
+    assert any(m["movement_type"] == "receipt" and m["quantity"] == 7 for m in movements)
+
+
+def test_order_illegal_transition_rejected():
+    with TestClient(app) as client:
+        headers = _login(client)
+        p = _create_product(client, headers, "ORD-BAD", purchase_price=10)
+        order = client.post(
+            "/api/orders/from-plan", headers=headers,
+            json={"items": [{"product_id": p["id"], "quantity": 1}]},
+        ).json()[0]
+        # draft -> received is not allowed (must go through sent)
+        resp = client.patch(f"/api/orders/{order['id']}/status", headers=headers, json={"status": "received"})
+
+    assert resp.status_code == 400
+
+
+def test_buyer_cannot_create_order():
+    with TestClient(app) as client:
+        admin_headers = _login(client)
+        p = _create_product(client, admin_headers, "ORD-BUYER", purchase_price=10)
+        buyer_headers = _ensure_buyer(client, admin_headers)
+        resp = client.post(
+            "/api/orders/from-plan", headers=buyer_headers,
+            json={"items": [{"product_id": p["id"], "quantity": 1}]},
+        )
+
+    assert resp.status_code == 403
+
+
+def test_order_create_is_audited():
+    with TestClient(app) as client:
+        headers = _login(client)
+        p = _create_product(client, headers, "ORD-AUDIT", purchase_price=10)
+        client.post(
+            "/api/orders/from-plan", headers=headers,
+            json={"items": [{"product_id": p["id"], "quantity": 1}]},
+        )
+        audit = client.get("/api/audit?action=order.create", headers=headers).json()
+
+    assert audit

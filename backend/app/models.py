@@ -163,6 +163,57 @@ class Notification(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, index=True)
 
 
+class OrderStatus(str, enum.Enum):
+    draft = "draft"          # черновик
+    sent = "sent"            # отправлен поставщику
+    received = "received"    # получен (создаёт приход)
+    cancelled = "cancelled"  # отменён
+
+
+# Allowed status transitions for a purchase order.
+ORDER_TRANSITIONS = {
+    "draft": {"sent", "cancelled"},
+    "sent": {"received", "cancelled"},
+    "received": set(),
+    "cancelled": set(),
+}
+
+
+class PurchaseOrder(Base):
+    __tablename__ = "purchase_orders"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    supplier_id: Mapped[int | None] = mapped_column(ForeignKey("suppliers.id"), nullable=True)
+    supplier_name: Mapped[str] = mapped_column(String(160), default="")
+    status: Mapped[str] = mapped_column(String(20), default="draft", index=True)
+    note: Mapped[str] = mapped_column(Text, default="")
+    total_amount: Mapped[float] = mapped_column(Float, default=0)
+    created_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    created_by_name: Mapped[str] = mapped_column(String(160), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, index=True)
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    received_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    items: Mapped[list["PurchaseOrderItem"]] = relationship(
+        back_populates="order", cascade="all, delete-orphan"
+    )
+
+
+class PurchaseOrderItem(Base):
+    __tablename__ = "purchase_order_items"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    order_id: Mapped[int] = mapped_column(ForeignKey("purchase_orders.id"), index=True)
+    product_id: Mapped[int | None] = mapped_column(ForeignKey("products.id"), nullable=True)
+    sku: Mapped[str] = mapped_column(String(80), default="")
+    name: Mapped[str] = mapped_column(String(255), default="")
+    quantity: Mapped[int] = mapped_column(Integer, default=0)
+    purchase_price: Mapped[float] = mapped_column(Float, default=0)
+    line_total: Mapped[float] = mapped_column(Float, default=0)
+
+    order: Mapped["PurchaseOrder"] = relationship(back_populates="items")
+
+
 class ProductSnapshot(Base):
     __tablename__ = "product_snapshots"
 

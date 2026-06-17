@@ -100,6 +100,87 @@ function bindAbc() {
   document.getElementById("abc-refresh")?.addEventListener("click", loadAbc);
 }
 
+function abcInsightTemplate() {
+  const model = state.abc;
+  const data = model.data;
+  const matrix = data ? data.matrix : {};
+  const abcRows = ["A", "B", "C"];
+  const xyzCols = ["X", "Y", "Z"];
+  const keyRows = data?.rows?.slice(0, 5) || [];
+
+  return `
+    <section class="panel abc-insight-panel">
+      <div class="panel-title">
+        <div>
+          <h3>Ассортиментная матрица</h3>
+          <span>ABC/XYZ как дополнительный срез по выручке и стабильности спроса</span>
+        </div>
+        ${button(model.loading ? "Считаю..." : "Обновить", "button-secondary button-sm", `type="button" id="abc-refresh-inline" ${model.loading ? "disabled" : ""}`)}
+      </div>
+
+      ${model.error ? `<div class="error-box" style="margin-top:12px">${escapeHtml(model.error)}</div>` : ""}
+
+      ${
+        model.loading && !data
+          ? `<div class="empty-state">Считаю матрицу...</div>`
+          : !data || !data.rows.length
+            ? `<div class="empty-state">Для ABC/XYZ нужна история продаж из импортов.</div>`
+            : `
+              <div class="abc-insight-grid">
+                <div>
+                  <table class="abc-matrix abc-matrix-compact">
+                    <thead>
+                      <tr><th></th>${xyzCols.map((c) => `<th>${c}</th>`).join("")}</tr>
+                    </thead>
+                    <tbody>
+                      ${abcRows
+                        .map(
+                          (r) => `
+                          <tr>
+                            <th>${r}</th>
+                            ${xyzCols
+                              .map((c) => {
+                                const n = matrix[`${r}${c}`] || 0;
+                                return `<td class="abc-cell ${n ? `abc-cell-${r}${c}` : "abc-cell-empty"}">${n}</td>`;
+                              })
+                              .join("")}
+                          </tr>
+                        `,
+                        )
+                        .join("")}
+                    </tbody>
+                  </table>
+                  <div class="abc-legend abc-legend-compact">
+                    <span><b>A/B/C</b> — вклад в выручку</span>
+                    <span><b>X/Y/Z</b> — стабильность спроса</span>
+                  </div>
+                </div>
+
+                <div class="abc-focus-list">
+                  ${keyRows
+                    .map(
+                      (row) => `
+                        <article class="abc-focus-row">
+                          <div>
+                            <strong>${escapeHtml(row.name)}</strong>
+                            <span>${formatMoney(row.revenue)} · ${escapeHtml(row.revenue_share)}%</span>
+                          </div>
+                          <div class="abc-focus-badges">
+                            ${abcBadge(row.abc, "abc")}
+                            ${abcBadge(row.xyz, "xyz")}
+                          </div>
+                        </article>
+                      `,
+                    )
+                    .join("")}
+                </div>
+              </div>
+            `
+      }
+    </section>
+  `;
+}
+
 async function loadAbc() {
   state.abc.loading = true;
   state.abc.error = "";
@@ -107,8 +188,10 @@ async function loadAbc() {
   try {
     const response = await api("/api/analytics/abc-xyz");
     state.abc.data = await response.json();
+    state.abc.loaded = true;
   } catch (error) {
     state.abc.error = error.message;
+    state.abc.loaded = true;
   } finally {
     state.abc.loading = false;
     render();

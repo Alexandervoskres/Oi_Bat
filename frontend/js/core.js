@@ -13,11 +13,10 @@ const NAV_ITEMS = [
   { id: "dashboard", label: "Дашборд", adminOnly: false },
   { id: "warehouse", label: "Склад", adminOnly: false },
   { id: "risks", label: "Риски", adminOnly: false },
-  { id: "abc", label: "ABC/XYZ", adminOnly: false },
   { id: "procurement", label: "Закупки", adminOnly: false },
+  { id: "orders", label: "Заказы", adminOnly: false },
   { id: "suppliers", label: "Поставщики", adminOnly: false },
   { id: "chat", label: "AI-советник", adminOnly: false },
-  { id: "notifications", label: "Уведомления", adminOnly: false },
   { id: "imports", label: "Excel и история", adminOnly: false },
   { id: "reports", label: "Отчеты", adminOnly: false },
   { id: "audit", label: "Аудит", adminOnly: true },
@@ -123,6 +122,7 @@ const state = {
   },
   abc: {
     data: null,
+    loaded: false,
     loading: false,
     error: "",
   },
@@ -131,6 +131,7 @@ const state = {
     unread: 0,
     loading: false,
     error: "",
+    open: false,
     onlyUnread: false,
   },
   suppliers: {
@@ -140,6 +141,13 @@ const state = {
     message: "",
     editingId: null,
     form: { name: "", contact_person: "", phone: "", email: "", reliability: 3, min_order_amount: 0, payment_terms: "", lead_time_days: 7, notes: "" },
+  },
+  orders: {
+    rows: [],
+    loading: false,
+    error: "",
+    message: "",
+    expandedId: null,
   },
   modal: {
     open: false,
@@ -373,6 +381,7 @@ function appTemplate() {
         ${state.error ? `<div class="error-box global-error">${escapeHtml(state.error)}</div>` : ""}
         ${activeTemplate()}
       </main>
+      ${state.notifications.open ? notificationsPopoverTemplate() : ""}
       ${state.modal.open ? modalTemplate() : ""}
       ${state.riskModal.open ? riskModalTemplate() : ""}
     </div>
@@ -389,6 +398,13 @@ function sidebarTemplate() {
           <strong>СкладAI</strong>
           <span>строительный склад</span>
         </div>
+        <button class="icon-button notification-trigger" id="notification-trigger" type="button" aria-label="Уведомления">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"></path>
+            <path d="M13.7 21a2 2 0 0 1-3.4 0"></path>
+          </svg>
+          ${state.notifications.unread ? `<span class="nav-badge notification-badge">${state.notifications.unread > 99 ? "99+" : state.notifications.unread}</span>` : ""}
+        </button>
       </div>
       <nav>
         ${items
@@ -396,7 +412,6 @@ function sidebarTemplate() {
             (item) => `
               <button class="nav-item ${state.active === item.id ? "active" : ""}" data-nav="${item.id}">
                 <span>${escapeHtml(item.label)}</span>
-                ${item.id === "notifications" && state.notifications.unread ? `<span class="nav-badge">${state.notifications.unread > 99 ? "99+" : state.notifications.unread}</span>` : ""}
               </button>
             `,
           )
@@ -418,15 +433,20 @@ function bindShell() {
       render();
       if (state.active === "warehouse" && !state.warehouse.rows.length) await loadProducts();
       if (state.active === "risks") await loadRisks();
-      if (state.active === "abc") await loadAbc();
       if (state.active === "procurement") await loadProcurement();
+      if (state.active === "orders") await loadOrders();
       if (state.active === "suppliers") await loadSuppliers();
-      if (state.active === "notifications") await loadNotifications();
       if (state.active === "imports" && !state.imports.rows.length) await loadImports();
       if (state.active === "audit") await loadAudit();
       if (state.active === "users" && !state.users.rows.length) await loadUsers();
     });
   });
+  document.getElementById("notification-trigger")?.addEventListener("click", async () => {
+    state.notifications.open = !state.notifications.open;
+    render();
+    if (state.notifications.open && !state.notifications.items.length) await loadNotifications();
+  });
+  if (state.notifications.open) bindNotificationsPopover();
   document.getElementById("logout-button").addEventListener("click", logout);
 }
 
@@ -437,10 +457,9 @@ function activeTemplate() {
   if (state.active === "dashboard") return dashboardTemplate();
   if (state.active === "warehouse") return warehouseTemplate();
   if (state.active === "risks") return risksTemplate();
-  if (state.active === "abc") return abcTemplate();
   if (state.active === "procurement") return procurementTemplate();
+  if (state.active === "orders") return ordersTemplate();
   if (state.active === "suppliers") return suppliersTemplate();
-  if (state.active === "notifications") return notificationsTemplate();
   if (state.active === "chat") return chatTemplate();
   if (state.active === "imports") return importsTemplate();
   if (state.active === "reports") return reportsTemplate();
@@ -453,10 +472,9 @@ function bindActiveScreen() {
   if (state.active === "dashboard") bindDashboard();
   if (state.active === "warehouse") bindWarehouse();
   if (state.active === "risks") bindRisks();
-  if (state.active === "abc") bindAbc();
   if (state.active === "procurement") bindProcurement();
+  if (state.active === "orders") bindOrders();
   if (state.active === "suppliers") bindSuppliers();
-  if (state.active === "notifications") bindNotifications();
   if (state.active === "chat") bindChat();
   if (state.active === "imports") bindImports();
   if (state.active === "reports") bindReports();
@@ -478,7 +496,7 @@ async function refreshDashboard() {
 }
 
 async function refreshUnreadBadge() {
-  // Lightweight: keep the sidebar badge current without opening the screen.
+  // Lightweight: keep the notification badge current without opening the popover.
   try {
     const response = await api("/api/notifications?only_unread=true");
     const data = await response.json();
@@ -633,16 +651,22 @@ function dashboardTemplate() {
         </div>
         ${forecastTable(data.forecast)}
       </section>
+
+      ${typeof abcInsightTemplate === "function" ? abcInsightTemplate() : ""}
     </section>
   `;
 }
 
 function bindDashboard() {
   document.getElementById("refresh-dashboard").addEventListener("click", refreshDashboard);
+  document.getElementById("abc-refresh-inline")?.addEventListener("click", loadAbc);
   document.getElementById("open-chat")?.addEventListener("click", () => {
     state.active = "chat";
     render();
   });
+  if (!state.abc.loaded && !state.abc.loading && typeof loadAbc === "function") {
+    loadAbc();
+  }
 }
 
 function forecastTable(rows) {

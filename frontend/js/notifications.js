@@ -11,63 +11,79 @@ const NOTIFICATION_TYPE_LABELS = {
   supplier_overdue: "Поставщик",
 };
 
-function notificationsTemplate() {
+function notificationRowsTemplate(items) {
+  if (!items.length) return "";
+  return items
+    .map(
+      (n) => `
+        <article class="notif-row ${n.is_read ? "notif-read" : ""}" data-id="${n.id}">
+          <span class="notif-dot status-${escapeHtml(n.severity)}"></span>
+          <div class="notif-body">
+            <div class="notif-head">
+              <strong>${escapeHtml(n.title)}</strong>
+              <span class="notif-type">${escapeHtml(NOTIFICATION_TYPE_LABELS[n.type] || n.type)}</span>
+            </div>
+            <p>${escapeHtml(n.message)}</p>
+            <small>${escapeHtml(formatDateTime(n.created_at))}</small>
+          </div>
+          ${n.is_read ? "" : `<button class="btn-mini notif-read-btn" data-id="${n.id}">Прочитано</button>`}
+        </article>
+      `,
+    )
+    .join("");
+}
+
+function notificationsPopoverTemplate() {
   const model = state.notifications;
   const canScan = ["admin", "manager"].includes(state.user.role);
   const items = model.onlyUnread ? model.items.filter((n) => !n.is_read) : model.items;
 
   return `
-    <section class="screen">
-      <header class="screen-header">
+    <div class="notif-popover-backdrop" id="notif-popover-backdrop"></div>
+    <section class="notif-popover" role="dialog" aria-label="Уведомления склада">
+      <header class="notif-popover-header">
         <div>
-          <span class="eyebrow">центр оповещений</span>
-          <h2>Уведомления ${model.unread ? `<span class="title-badge">${model.unread}</span>` : ""}</h2>
+          <span>Ваш склад</span>
+          <h3>Уведомления ${model.unread ? `<span class="title-badge">${model.unread}</span>` : ""}</h3>
         </div>
-        <div class="toolbar">
-          <label class="flag-check" style="white-space:nowrap">
-            <input type="checkbox" id="notif-only-unread" ${model.onlyUnread ? "checked" : ""} />
-            <span>Только непрочитанные</span>
-          </label>
-          ${model.unread ? button("Прочитать все", "button-secondary", 'type="button" id="notif-read-all"') : ""}
-          ${canScan ? button("Проверить склад", "", 'type="button" id="notif-scan"') : ""}
-        </div>
+        <button class="icon-button notif-close" id="notif-close" type="button" aria-label="Закрыть уведомления">×</button>
       </header>
 
-      ${model.error ? `<div class="error-box" style="margin-bottom:14px">${escapeHtml(model.error)}</div>` : ""}
+      <div class="notif-popover-actions">
+        <label class="notif-toggle">
+          <input type="checkbox" id="notif-only-unread" ${model.onlyUnread ? "checked" : ""} />
+          <span>Новые</span>
+        </label>
+        <div>
+          ${model.unread ? button("Прочитать все", "button-secondary button-sm", 'type="button" id="notif-read-all"') : ""}
+          ${canScan ? button("Проверить", "button-sm", 'type="button" id="notif-scan"') : ""}
+        </div>
+      </div>
 
-      <section class="panel">
+      ${model.error ? `<div class="error-box notif-error">${escapeHtml(model.error)}</div>` : ""}
+
+      <div class="notif-popover-list">
         ${
           model.loading
             ? `<div class="empty-state">Загружаю...</div>`
             : items.length
-              ? `<div class="notif-list">
-                  ${items
-                    .map(
-                      (n) => `
-                      <article class="notif-row ${n.is_read ? "notif-read" : ""}" data-id="${n.id}">
-                        <span class="notif-dot status-${escapeHtml(n.severity)}"></span>
-                        <div class="notif-body">
-                          <div class="notif-head">
-                            <strong>${escapeHtml(n.title)}</strong>
-                            <span class="notif-type">${escapeHtml(NOTIFICATION_TYPE_LABELS[n.type] || n.type)}</span>
-                          </div>
-                          <p>${escapeHtml(n.message)}</p>
-                          <small>${escapeHtml(formatDateTime(n.created_at))}</small>
-                        </div>
-                        ${n.is_read ? "" : `<button class="btn-mini notif-read-btn" data-id="${n.id}">Прочитано</button>`}
-                      </article>
-                    `,
-                    )
-                    .join("")}
-                </div>`
-              : `<div class="empty-state">${model.onlyUnread ? "Непрочитанных уведомлений нет." : "Уведомлений нет. Нажмите «Проверить склад»."}</div>`
+              ? `<div class="notif-list">${notificationRowsTemplate(items)}</div>`
+              : `<div class="empty-state">${model.onlyUnread ? "Новых уведомлений нет." : "Уведомлений нет. Нажмите «Проверить»."}</div>`
         }
-      </section>
+      </div>
     </section>
   `;
 }
 
-function bindNotifications() {
+function bindNotificationsPopover() {
+  document.getElementById("notif-popover-backdrop")?.addEventListener("click", () => {
+    state.notifications.open = false;
+    render();
+  });
+  document.getElementById("notif-close")?.addEventListener("click", () => {
+    state.notifications.open = false;
+    render();
+  });
   document.getElementById("notif-scan")?.addEventListener("click", scanNotifications);
   document.getElementById("notif-read-all")?.addEventListener("click", markAllNotificationsRead);
   document.getElementById("notif-only-unread")?.addEventListener("change", (e) => {

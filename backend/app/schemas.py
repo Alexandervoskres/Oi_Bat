@@ -226,6 +226,49 @@ class MovementOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class OrderItemIn(BaseModel):
+    product_id: int
+    quantity: int = Field(gt=0)
+
+
+class OrderCreateFromPlan(BaseModel):
+    items: list[OrderItemIn] = Field(min_length=1)
+    note: str = Field(default="", max_length=2000)
+
+
+class OrderStatusUpdate(BaseModel):
+    status: str = Field(pattern="^(draft|sent|received|cancelled)$")
+
+
+class OrderItemOut(BaseModel):
+    id: int
+    product_id: int | None
+    sku: str
+    name: str
+    quantity: int
+    purchase_price: float
+    line_total: float
+
+    model_config = {"from_attributes": True}
+
+
+class OrderOut(BaseModel):
+    id: int
+    supplier_id: int | None
+    supplier_name: str
+    status: str
+    note: str
+    total_amount: float
+    created_by_name: str
+    created_at: datetime
+    sent_at: datetime | None
+    received_at: datetime | None
+    items: list[OrderItemOut] = []
+    item_count: int = 0
+
+    model_config = {"from_attributes": True}
+
+
 class NotificationOut(BaseModel):
     id: int
     type: str

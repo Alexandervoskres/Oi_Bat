@@ -22,7 +22,8 @@ function procurementTemplate() {
         </div>
         <div class="toolbar">
           ${model.rows.length ? button("Скачать CSV", "button-secondary", 'type="button" id="procurement-csv"') : ""}
-          ${button("Обновить", "", 'type="button" id="procurement-refresh"')}
+          ${model.rows.length && ["admin", "manager"].includes(state.user.role) ? button("Сформировать заказ", "", 'type="button" id="procurement-order"') : ""}
+          ${button("Обновить", "button-secondary", 'type="button" id="procurement-refresh"')}
         </div>
       </header>
 
@@ -110,6 +111,7 @@ function procurementTemplate() {
 function bindProcurement() {
   document.getElementById("procurement-refresh")?.addEventListener("click", loadProcurement);
   document.getElementById("procurement-csv")?.addEventListener("click", exportProcurementCsv);
+  document.getElementById("procurement-order")?.addEventListener("click", createOrderFromPlan);
 
   document.querySelectorAll(".qty-input").forEach((input) => {
     input.addEventListener("input", () => {
@@ -127,6 +129,31 @@ function bindProcurement() {
       }
     });
   });
+}
+
+async function createOrderFromPlan() {
+  const items = state.procurement.rows
+    .map((r) => ({ product_id: r.id, quantity: procurementQty(r) }))
+    .filter((i) => i.quantity > 0);
+  if (!items.length) {
+    state.procurement.error = "Нет позиций с количеством для заказа.";
+    render();
+    return;
+  }
+  if (!window.confirm(`Сформировать заказ(ы) на ${items.length} позиц.? Товары сгруппируются по поставщикам.`)) return;
+
+  try {
+    const response = await api("/api/orders/from-plan", { method: "POST", body: JSON.stringify({ items }) });
+    const orders = await response.json();
+    state.active = "orders";
+    render();
+    await loadOrders();
+    state.orders.message = `Создано заказов: ${orders.length}. Проверьте и отправьте поставщикам.`;
+    render();
+  } catch (error) {
+    state.procurement.error = error.message;
+    render();
+  }
 }
 
 function exportProcurementCsv() {
