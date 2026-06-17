@@ -77,6 +77,9 @@ class Settings:
     claw_status_cache_seconds: int = _env_int("CLAW_STATUS_CACHE_SECONDS", 30)
     # Number of recent chat turns forwarded to the model for follow-up context.
     ai_history_turns: int = _env_int("AI_HISTORY_TURNS", 6)
+    # Append /no_think to the agent prompt (qwen3): ~halves latency and stops
+    # the model wandering into tool calls. Harmless for models that ignore it.
+    claw_no_think: bool = _env_bool("CLAW_NO_THINK", True)
 
     @property
     def is_production(self) -> bool:

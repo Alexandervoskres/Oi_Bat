@@ -129,15 +129,22 @@ def _format_history(history: list[dict] | None) -> str:
 
 
 def build_claw_prompt(message: str, warehouse_context: list[dict], history: list[dict] | None = None) -> str:
+    # `/no_think` disables qwen3-style chain-of-thought: it roughly halves latency
+    # and keeps the model from wandering into tool calls (e.g. trying to read
+    # files) instead of answering from the provided JSON. Harmless for models
+    # that don't recognise it. Toggle via CLAW_NO_THINK.
+    no_think = "\n\n/no_think" if settings.claw_no_think else ""
     return (
         "Ты Claw Code агент, встроенный как AI-ассистент в веб-приложение StoreAI/СкладAI.\n"
         "Отвечай владельцу склада строительных инструментов на русском языке.\n"
         "Используй только JSON-контекст склада ниже: не выдумывай товары, цены, остатки или поставщиков.\n"
-        "Не изменяй файлы, не запускай команды и не проси доступы: сейчас нужен только аналитический ответ.\n"
+        "Не используй инструменты Claw, не изменяй файлы, не запускай команды и не проси доступы: сейчас нужен только аналитический ответ.\n"
         "Отвечай кратко, практично, списками и цифрами. Если данных не хватает, честно скажи каких.\n\n"
+        "Не возвращай JSON, YAML, Markdown-таблицы или служебные поля. Пользователь должен увидеть готовый человеческий ответ.\n\n"
         f"Контекст склада JSON:\n{json.dumps(warehouse_context, ensure_ascii=False, separators=(',', ':'))}\n\n"
         f"{_format_history(history)}"
         f"Текущий вопрос пользователя:\n{message}"
+        f"{no_think}"
     )
 
 
@@ -178,6 +185,9 @@ def call_claw_agent(
             status["binary_path"],
             "--permission-mode",
             settings.claw_permission_mode,
+            "--allowedTools",
+            "read",
+            "--compact",
         ]
         if settings.claw_model:
             args.extend(["--model", settings.claw_model])
