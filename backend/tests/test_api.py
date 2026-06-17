@@ -946,3 +946,83 @@ def test_import_auto_links_supplier_by_name():
 
     linked = next(p for p in products if p["sku"] == "LINK-1")
     assert linked["supplier_id"] == sup["id"]  # case-insensitive name match
+
+
+# ─── User management & security ───────────────────────────────────────────────
+
+
+def _create_user(client, admin_headers, username, role="manager", password="passw0rd"):
+    resp = client.post(
+        "/api/users", headers=admin_headers,
+        json={"username": username, "full_name": username.title(), "password": password, "role": role},
+    )
+    assert resp.status_code in (201, 409)
+    users = client.get("/api/users", headers=admin_headers).json()
+    return next(u for u in users if u["username"] == username)
+
+
+def test_admin_can_edit_role_and_deactivate():
+    with TestClient(app) as client:
+        admin = _login(client)
+        u = _create_user(client, admin, "edit_target", role="manager")
+        promote = client.patch(f"/api/users/{u['id']}", headers=admin, json={"role": "buyer", "full_name": "Renamed"})
+        deact = client.patch(f"/api/users/{u['id']}", headers=admin, json={"is_active": False})
+
+    assert promote.status_code == 200
+    assert promote.json()["role"] == "buyer"
+    assert promote.json()["full_name"] == "Renamed"
+    assert deact.json()["is_active"] is False
+
+
+def test_deactivated_user_cannot_login():
+    with TestClient(app) as client:
+        admin = _login(client)
+        u = _create_user(client, admin, "to_disable", password="passw0rd")
+        client.patch(f"/api/users/{u['id']}", headers=admin, json={"is_active": False})
+        resp = client.post("/api/auth/login", json={"username": "to_disable", "password": "passw0rd"})
+
+    assert resp.status_code == 401
+
+
+def test_admin_cannot_deactivate_self():
+    with TestClient(app) as client:
+        admin = _login(client)
+        me = client.get("/api/auth/me", headers=admin).json()
+        resp = client.patch(f"/api/users/{me['id']}", headers=admin, json={"is_active": False})
+
+    assert resp.status_code == 400
+
+
+def test_admin_password_reset_lets_user_login():
+    with TestClient(app) as client:
+        admin = _login(client)
+        u = _create_user(client, admin, "reset_me", password="oldpass1")
+        reset = client.post(f"/api/users/{u['id']}/reset-password", headers=admin, json={"password": "newpass2"})
+        ok = client.post("/api/auth/login", json={"username": "reset_me", "password": "newpass2"})
+
+    assert reset.status_code == 204
+    assert ok.status_code == 200
+
+
+def test_self_change_password():
+    with TestClient(app) as client:
+        admin = _login(client)
+        _create_user(client, admin, "selfchg", password="origpass1")
+        headers = _login(client, "selfchg", "origpass1")
+        wrong = client.post("/api/auth/change-password", headers=headers, json={"current_password": "nope", "new_password": "brandnew1"})
+        ok = client.post("/api/auth/change-password", headers=headers, json={"current_password": "origpass1", "new_password": "brandnew1"})
+        relog = client.post("/api/auth/login", json={"username": "selfchg", "password": "brandnew1"})
+
+    assert wrong.status_code == 400
+    assert ok.status_code == 204
+    assert relog.status_code == 200
+
+
+def test_buyer_cannot_manage_users():
+    with TestClient(app) as client:
+        admin = _login(client)
+        buyer = _ensure_buyer(client, admin)
+        target = _create_user(client, admin, "victim")
+        resp = client.patch(f"/api/users/{target['id']}", headers=buyer, json={"role": "admin"})
+
+    assert resp.status_code == 403

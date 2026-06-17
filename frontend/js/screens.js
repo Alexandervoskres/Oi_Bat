@@ -80,29 +80,40 @@ function usersTemplate() {
             <h3>Список пользователей</h3>
             <span>${escapeHtml(model.rows.length)}</span>
           </div>
-          <table class="data-table">
+          <table class="data-table users-table">
             <thead>
               <tr>
                 <th>Логин</th>
-                <th>Имя</th>
                 <th>Роль</th>
-                <th>Создан</th>
+                <th>Статус</th>
+                <th>Действия</th>
               </tr>
             </thead>
             <tbody>
               ${
                 model.rows.length
                   ? model.rows
-                      .map(
-                        (item) => `
-                          <tr>
-                            <td>${escapeHtml(item.username)}</td>
-                            <td>${escapeHtml(item.full_name)}</td>
-                            <td>${escapeHtml(ROLE_LABELS[item.role] || item.role)}</td>
-                            <td>${escapeHtml(formatDate(item.created_at))}</td>
+                      .map((item) => {
+                        const self = state.user && item.id === state.user.id;
+                        return `
+                          <tr class="${item.is_active ? "" : "user-inactive"}">
+                            <td>
+                              <strong>${escapeHtml(item.username)}</strong>
+                              <span>${escapeHtml(item.full_name || "—")}${self ? " · вы" : ""}</span>
+                            </td>
+                            <td>
+                              <select class="user-role-select" data-id="${item.id}" ${self ? "disabled title='Нельзя менять свою роль'" : ""}>
+                                ${["manager", "buyer", "admin"].map((role) => `<option value="${role}" ${item.role === role ? "selected" : ""}>${escapeHtml(ROLE_LABELS[role])}</option>`).join("")}
+                              </select>
+                            </td>
+                            <td>${item.is_active ? `<span class="status-pill status-positive">Активен</span>` : `<span class="status-pill status-critical">Отключён</span>`}</td>
+                            <td class="row-actions">
+                              ${self ? "" : `<button class="btn-mini btn-user-active" data-id="${item.id}" data-active="${item.is_active}">${item.is_active ? "Отключить" : "Включить"}</button>`}
+                              <button class="btn-mini btn-user-reset" data-id="${item.id}" data-name="${escapeHtml(item.username)}">Сбросить пароль</button>
+                            </td>
                           </tr>
-                        `,
-                      )
+                        `;
+                      })
                       .join("")
                   : `<tr><td colspan="4">Пользователей пока нет.</td></tr>`
               }
@@ -116,6 +127,54 @@ function usersTemplate() {
 
 function bindUsers() {
   document.getElementById("user-form").addEventListener("submit", createUser);
+  document.querySelectorAll(".user-role-select").forEach((sel) => {
+    sel.addEventListener("change", () => updateUserRole(Number(sel.dataset.id), sel.value));
+  });
+  document.querySelectorAll(".btn-user-active").forEach((btn) => {
+    btn.addEventListener("click", () => toggleUserActive(Number(btn.dataset.id), btn.dataset.active !== "true"));
+  });
+  document.querySelectorAll(".btn-user-reset").forEach((btn) => {
+    btn.addEventListener("click", () => resetUserPassword(Number(btn.dataset.id), btn.dataset.name));
+  });
+}
+
+async function patchUser(id, body, message) {
+  state.users.message = "";
+  try {
+    await api(`/api/users/${id}`, { method: "PATCH", body: JSON.stringify(body) });
+    state.users.message = message || "Изменения сохранены.";
+    await loadUsers();
+  } catch (error) {
+    state.users.message = error.message;
+    await loadUsers(); // re-sync controls (e.g. role select) to server state
+  }
+}
+
+async function updateUserRole(id, role) {
+  await patchUser(id, { role }, "Роль обновлена.");
+}
+
+async function toggleUserActive(id, active) {
+  await patchUser(id, { is_active: active }, active ? "Пользователь включён." : "Пользователь отключён.");
+}
+
+async function resetUserPassword(id, name) {
+  const pwd = window.prompt(`Новый пароль для «${name}» (минимум 6 символов):`);
+  if (!pwd) return;
+  if (pwd.length < 6) {
+    state.users.message = "Пароль слишком короткий (минимум 6).";
+    render();
+    return;
+  }
+  state.users.message = "";
+  try {
+    await api(`/api/users/${id}/reset-password`, { method: "POST", body: JSON.stringify({ password: pwd }) });
+    state.users.message = `Пароль для «${name}» сброшен.`;
+    render();
+  } catch (error) {
+    state.users.message = error.message;
+    render();
+  }
 }
 
 async function loadUsers() {
@@ -444,6 +503,7 @@ async function deleteSupplier(id, name) {
 // ─── Settings ─────────────────────────────────────────────────────────────────
 
 function settingsTemplate() {
+  const s = state.settings;
   return `
     <section class="screen">
       <header class="screen-header">
@@ -452,7 +512,21 @@ function settingsTemplate() {
           <h2>Серверные настройки</h2>
         </div>
       </header>
+
+      <section class="panel" style="margin-bottom:14px">
+        <div class="panel-title"><h3>Смена пароля</h3></div>
+        ${s.error ? `<div class="error-box" style="margin-bottom:12px">${escapeHtml(s.error)}</div>` : ""}
+        ${s.message ? `<div class="notice-box" style="margin-bottom:12px">${escapeHtml(s.message)}</div>` : ""}
+        <form id="password-form" class="user-form" style="max-width:420px">
+          <input id="pw-current" type="password" placeholder="Текущий пароль" autocomplete="current-password" />
+          <input id="pw-new" type="password" placeholder="Новый пароль (мин. 6)" autocomplete="new-password" />
+          <input id="pw-confirm" type="password" placeholder="Повторите новый пароль" autocomplete="new-password" />
+          ${button("Сменить пароль", "", 'type="submit"')}
+        </form>
+      </section>
+
       <section class="panel settings-list">
+        <div class="panel-title"><h3>Конфигурация</h3></div>
         <article>
           <strong>PostgreSQL</strong>
           <span>Основной режим через DATABASE_URL. Для локального старта есть fallback SQLite.</span>
@@ -468,5 +542,41 @@ function settingsTemplate() {
       </section>
     </section>
   `;
+}
+
+function bindSettings() {
+  document.getElementById("password-form")?.addEventListener("submit", changeMyPassword);
+}
+
+async function changeMyPassword(event) {
+  event.preventDefault();
+  const current = document.getElementById("pw-current").value;
+  const next = document.getElementById("pw-new").value;
+  const confirmPw = document.getElementById("pw-confirm").value;
+  state.settings.message = "";
+  state.settings.error = "";
+
+  if (next.length < 6) {
+    state.settings.error = "Новый пароль слишком короткий (минимум 6).";
+    render();
+    return;
+  }
+  if (next !== confirmPw) {
+    state.settings.error = "Новый пароль и подтверждение не совпадают.";
+    render();
+    return;
+  }
+
+  try {
+    await api("/api/auth/change-password", {
+      method: "POST",
+      body: JSON.stringify({ current_password: current, new_password: next }),
+    });
+    state.settings.message = "Пароль изменён.";
+    render();
+  } catch (error) {
+    state.settings.error = error.message;
+    render();
+  }
 }
 

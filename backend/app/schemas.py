@@ -36,6 +36,21 @@ class UserCreate(BaseModel):
     role: UserRole = UserRole.manager
 
 
+class UserUpdate(BaseModel):
+    full_name: str | None = Field(default=None, max_length=160)
+    role: UserRole | None = None
+    is_active: bool | None = None
+
+
+class PasswordReset(BaseModel):
+    password: str = Field(min_length=6)
+
+
+class ChangePassword(BaseModel):
+    current_password: str = Field(min_length=1)
+    new_password: str = Field(min_length=6)
+
+
 class ImportBatchOut(BaseModel):
     id: int
     filename: str

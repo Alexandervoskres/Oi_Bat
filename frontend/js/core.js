@@ -149,6 +149,10 @@ const state = {
     message: "",
     expandedId: null,
   },
+  settings: {
+    message: "",
+    error: "",
+  },
   modal: {
     open: false,
     mode: "edit", // "edit" | "create"
@@ -480,6 +484,7 @@ function bindActiveScreen() {
   if (state.active === "reports") bindReports();
   if (state.active === "audit" && state.user.role === "admin") bindAudit();
   if (state.active === "users" && state.user.role === "admin") bindUsers();
+  if (state.active === "settings") bindSettings();
 }
 
 async function refreshDashboard() {

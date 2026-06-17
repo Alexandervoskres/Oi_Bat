@@ -2298,3 +2298,19 @@ nav {
   color: var(--muted);
   font-size: 13px;
 }
+
+/* ── User management ───────────────────────────────────────────────────────── */
+
+.users-table .user-role-select {
+  min-height: 34px;
+  width: auto;
+  min-width: 130px;
+}
+
+.user-inactive {
+  opacity: 0.55;
+}
+
+.users-table td .row-actions {
+  white-space: nowrap;
+}
