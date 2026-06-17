@@ -80,6 +80,11 @@ class Settings:
     # Append /no_think to the agent prompt (qwen3): ~halves latency and stops
     # the model wandering into tool calls. Harmless for models that ignore it.
     claw_no_think: bool = _env_bool("CLAW_NO_THINK", True)
+    # Direct Ollama streaming for chat (token-by-token). Uses the same model as
+    # Claw (CLAW_MODEL) but talks to Ollama's API directly, since Claw buffers
+    # its output and can't stream. Empty OLLAMA_HOST disables the streaming path.
+    ollama_host: str = os.getenv("OLLAMA_HOST", "")
+    ai_num_predict: int = _env_int("AI_NUM_PREDICT", 600)
 
     @property
     def is_production(self) -> bool:

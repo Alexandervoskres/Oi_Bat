@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from io import BytesIO
+import json
 import os
 from pathlib import Path
 import tempfile
@@ -14,6 +15,7 @@ os.environ["DATABASE_URL"] = f"sqlite:///{Path(db_path).as_posix()}"
 os.environ["SECRET_KEY"] = "test-secret-key"
 os.environ["DEFAULT_ADMIN_USERNAME"] = "admin"
 os.environ["DEFAULT_ADMIN_PASSWORD"] = "admin123"
+os.environ["CLAW_AGENT_ENABLED"] = "false"
 
 from fastapi.testclient import TestClient  # noqa: E402
 
@@ -360,6 +362,110 @@ def test_ai_chat_greeting_does_not_return_warehouse_summary():
     assert "Сначала проверьте закупку" not in body["answer"]
 
 
+def test_ai_chat_greeting_skips_external_agent():
+    with TestClient(app) as client:
+        headers = _login(client)
+        with patch("backend.app.services.ai_service.call_claw_agent") as claw:
+            response = client.post("/api/ai/chat", headers=headers, json={"message": "Привет"})
+
+    assert response.status_code == 200
+    assert response.json()["source"] == "rule_based"
+    claw.assert_not_called()
+
+
+def test_ai_chat_low_signal_chatter_skips_external_agent():
+    with TestClient(app) as client:
+        headers = _login(client)
+        with patch("backend.app.services.ai_service.call_claw_agent") as claw:
+            response = client.post("/api/ai/chat", headers=headers, json={"message": "Ого"})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["source"] == "rule_based"
+    assert "Чем помочь" in body["answer"]
+    claw.assert_not_called()
+
+
+def test_ai_chat_simple_non_operational_question_skips_external_agent():
+    with TestClient(app) as client:
+        headers = _login(client)
+        with patch("backend.app.services.ai_service.call_claw_agent") as claw:
+            response = client.post("/api/ai/chat", headers=headers, json={"message": "Как дела?"})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["source"] == "rule_based"
+    assert "Если нужен склад" in body["answer"]
+    claw.assert_not_called()
+
+
+def test_ai_chat_local_knowledge_skips_external_agent():
+    with TestClient(app) as client:
+        headers = _login(client)
+        with patch("backend.app.services.ai_service.call_claw_agent") as claw:
+            response = client.post(
+                "/api/ai/chat",
+                headers=headers,
+                json={"message": "Чем отличается SDS Plus от SDS Max?"},
+            )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["source"] == "rule_based"
+    assert "SDS Plus" in body["answer"]
+    assert "SDS Max" in body["answer"]
+    claw.assert_not_called()
+
+
+def test_ai_chat_budget_question_uses_fast_local_answer():
+    with TestClient(app) as client:
+        headers = _login(client)
+        _create_product(client, headers, "BUDGET-FAST", name="Бюджетный тест", stock=0, min_stock=5, purchase_price=3000, sold_month=4)
+        with patch("backend.app.services.ai_service.call_claw_agent") as claw:
+            response = client.post("/api/ai/chat", headers=headers, json={"message": "бюджет 10 тысяч это хорошо или плохо?"})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["source"] == "rule_based"
+    assert "10 000" in body["answer"]
+    assert not body["answer"].lstrip().startswith("{")
+    claw.assert_not_called()
+
+
+def test_ai_chat_week_plan_uses_local_warehouse_rules():
+    with TestClient(app) as client:
+        headers = _login(client)
+        _create_product(client, headers, "PLAN-FAST", name="Плановый товар", stock=0, min_stock=4, purchase_price=1200, sold_month=6)
+        with patch("backend.app.services.ai_service.call_claw_agent") as claw:
+            response = client.post("/api/ai/chat", headers=headers, json={"message": "План на неделю"})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["source"] == "rule_based"
+    assert "Приоритетный план" in body["answer"]
+    assert "Плановый товар" in body["answer"]
+    assert "Если нужен склад" not in body["answer"]
+    assert "1." not in body["answer"]
+    claw.assert_not_called()
+
+
+def test_ai_chat_selloff_uses_local_warehouse_rules():
+    with TestClient(app) as client:
+        headers = _login(client)
+        created = _create_product(client, headers, "SELL-FAST", name="Распродажный товар", stock=12, sold_month=0)
+        client.patch(f"/api/products/{created['id']}/risk", headers=headers, json={"risk_status_override": "dead_stock"})
+        with patch("backend.app.services.ai_service.call_claw_agent") as claw:
+            response = client.post("/api/ai/chat", headers=headers, json={"message": "Что распродать?"})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["source"] == "rule_based"
+    assert "Рекомендую распродать" in body["answer"]
+    assert "Распродажный товар" in body["answer"]
+    assert "Если нужен склад" not in body["answer"]
+    claw.assert_not_called()
+
+
 def test_ai_chat_weather_question_is_not_warehouse_summary():
     with TestClient(app) as client:
         headers = _login(client)
@@ -379,12 +485,18 @@ def test_ai_chat_no_order_branch_has_priority():
         headers = _login(client)
         created = _create_product(client, headers, "CHAT-NO-ORDER", name="Не закупать тест", stock=0, sold_month=8)
         client.patch(f"/api/products/{created['id']}/risk", headers=headers, json={"do_not_order": True})
-        response = client.post("/api/ai/chat", headers=headers, json={"message": "Что не закупать?"})
+        with patch("backend.app.services.ai_service.call_claw_agent") as claw:
+            response = client.post("/api/ai/chat", headers=headers, json={"message": "Что не закупать?"})
 
     assert response.status_code == 200
     body = response.json()
+    assert body["source"] == "rule_based"
     assert "Не закупать тест" in body["answer"]
     assert "Не закупать тест" in body["used_products"]
+    assert "(" not in body["answer"]
+    assert "severity" not in body["answer"]
+    assert "•" not in body["answer"]
+    claw.assert_not_called()
 
 
 def test_ai_chat_finds_product_by_partial_name():
@@ -552,13 +664,56 @@ def test_chat_uses_claw_when_it_answers():
             "backend.app.services.ai_service.call_claw_agent",
             return_value=ClawAgentResult(answer="Ответ Claw: закажите Клав товар"),
         ):
-            response = client.post("/api/ai/chat", headers=headers, json={"message": "что заказать?"})
+            response = client.post("/api/ai/chat", headers=headers, json={"message": "обзор"})
 
     body = response.json()
     assert body["source"] == "claw"
     assert body["agent"] == "Claw Code"
     assert "Claw" in body["answer"]
     assert "Клав товар" in body["used_products"]
+
+
+def test_chat_humanizes_json_answer_from_claw():
+    raw_json = (
+        '{"analysis":{"budget_status":"Недостаточно",'
+        '"reasons":[{"category":"Товары с нулевым остатком","details":"Нужно закрыть срочную закупку"}]},'
+        '"recommendations":["Увеличить бюджет или выбрать самые критичные позиции"]}'
+    )
+    with TestClient(app) as client:
+        headers = _login(client)
+        with patch(
+            "backend.app.services.ai_service.call_claw_agent",
+            return_value=ClawAgentResult(answer=raw_json),
+        ):
+            response = client.post("/api/ai/chat", headers=headers, json={"message": "обзор бюджета"})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["source"] == "claw"
+    assert not body["answer"].lstrip().startswith("{")
+    assert "budget_status" not in body["answer"]
+    assert "Оценка бюджета" in body["answer"]
+    assert "Недостаточно" in body["answer"]
+
+
+def test_chat_cleans_agent_technical_parentheses_and_markers():
+    raw_answer = '• Шуруповёрт (статус: "Нет в наличии", severity: "critical", остаток: 0).\n1. Перфоратор (остаток: 0).'
+    with TestClient(app) as client:
+        headers = _login(client)
+        with patch(
+            "backend.app.services.ai_service.call_claw_agent",
+            return_value=ClawAgentResult(answer=raw_answer),
+        ):
+            response = client.post("/api/ai/chat", headers=headers, json={"message": "обзор"})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert "Шуруповёрт" in body["answer"]
+    assert "Перфоратор" in body["answer"]
+    assert "(" not in body["answer"]
+    assert "severity" not in body["answer"]
+    assert "•" not in body["answer"]
+    assert "1." not in body["answer"]
 
 
 def test_chat_excludes_flagged_products_from_agent_context():
@@ -1026,3 +1181,19 @@ def test_buyer_cannot_manage_users():
         resp = client.patch(f"/api/users/{target['id']}", headers=buyer, json={"role": "admin"})
 
     assert resp.status_code == 403
+
+
+def test_ai_chat_stream_fast_path_emits_done_event():
+    with TestClient(app) as client:
+        headers = _login(client)
+        _create_product(client, headers, "STREAM-1", name="Стрим товар", stock=0, sold_month=8)
+        # "Что заказать?" is handled by the fast local router -> no Ollama needed.
+        resp = client.post("/api/ai/chat/stream", headers=headers, json={"message": "Что заказать?"})
+
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("text/event-stream")
+    events = [json.loads(line[5:].strip()) for line in resp.text.splitlines() if line.startswith("data:")]
+    assert any(e["type"] == "delta" for e in events)
+    done = next(e for e in events if e["type"] == "done")
+    assert done["source"] == "rule_based"
+    assert isinstance(done["answer"], str) and done["answer"]

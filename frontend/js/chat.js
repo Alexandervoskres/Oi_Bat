@@ -111,47 +111,23 @@ function chatTemplate() {
 
 function renderMarkdown(raw) {
   // Escape first, then apply a safe subset of markdown (bold, inline code,
-  // bullet/numbered lists, paragraphs). Operating on already-escaped text means
-  // no user/agent content can inject markup.
+  // paragraphs). Operating on already-escaped text means no user/agent content
+  // can inject markup. Chat answers are rendered without automatic bullets or
+  // numbering so model formatting never turns every line into a numbered block.
   const inline = (s) =>
     escapeHtml(s)
       .replace(/`([^`]+)`/g, "<code>$1</code>")
       .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
 
   const out = [];
-  let listType = null;
-  const closeList = () => {
-    if (listType) {
-      out.push(`</${listType}>`);
-      listType = null;
-    }
-  };
 
   for (const line of String(raw ?? "").split("\n")) {
-    const bullet = line.match(/^\s*[•\-*]\s+(.*)$/);
-    const numbered = line.match(/^\s*\d+[.)]\s+(.*)$/);
-    if (bullet) {
-      if (listType !== "ul") {
-        closeList();
-        out.push("<ul>");
-        listType = "ul";
-      }
-      out.push(`<li>${inline(bullet[1])}</li>`);
-    } else if (numbered) {
-      if (listType !== "ol") {
-        closeList();
-        out.push("<ol>");
-        listType = "ol";
-      }
-      out.push(`<li>${inline(numbered[1])}</li>`);
-    } else if (line.trim() === "") {
-      closeList();
-    } else {
-      closeList();
-      out.push(`<div>${inline(line)}</div>`);
-    }
+    const cleaned = line
+      .replace(/^\s*(?:[•\-*]|\d+[.)])\s+/, "")
+      .replace(/\s*\([^()]*\)/g, "")
+      .trim();
+    if (cleaned) out.push(`<div>${inline(cleaned)}</div>`);
   }
-  closeList();
   return out.join("");
 }
 
@@ -257,6 +233,14 @@ function buildChatHistory() {
     .map((m) => ({ role: m.role, content: m.text }));
 }
 
+function updateStreamingBubble(text) {
+  const bubbles = document.querySelectorAll(".chat-msg-assistant .chat-text");
+  const el = bubbles[bubbles.length - 1];
+  if (el) el.textContent = text; // raw text while streaming; markdown applied on done
+  const box = document.getElementById("chat-messages");
+  if (box) box.scrollTop = box.scrollHeight;
+}
+
 async function sendChat(rawMessage) {
   const message = (rawMessage || "").trim();
   if (!message || state.chat.loading) return;
@@ -269,23 +253,83 @@ async function sendChat(rawMessage) {
   saveChatMessages();
   render();
 
-  try {
-    const response = await api("/api/ai/chat", { method: "POST", body: JSON.stringify({ message, history }) });
-    const data = await response.json();
-    userMessage.status = "sent";
-    state.chat.messages.push({
-      ...createChatMessage("assistant", data.answer),
+  let assistant = null;
+  let acc = "";
+  const ensureAssistant = () => {
+    if (assistant) return;
+    assistant = {
+      ...createChatMessage("assistant", ""),
       role: "assistant",
-      text: data.answer,
-      suggested_actions: data.suggested_actions || [],
-      used_products: data.used_products || [],
-      agent: data.agent || "StoreAI",
-      source: data.source || "rule_based",
-      agent_status: data.agent_status || "",
+      text: "",
+      suggested_actions: [],
+      used_products: [],
+      agent: "",
+      source: "",
+    };
+    state.chat.messages.push(assistant);
+    state.chat.loading = false; // the streaming bubble now stands in for the spinner
+    render();
+  };
+
+  try {
+    const response = await fetch("/api/ai/chat/stream", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(state.token ? { Authorization: `Bearer ${state.token}` } : {}),
+      },
+      body: JSON.stringify({ message, history }),
     });
+    if (response.status === 401) {
+      logout();
+      return;
+    }
+    if (!response.ok || !response.body) throw new Error("Сервер недоступен");
+    userMessage.status = "sent";
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let streamDone = false;
+    while (!streamDone) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let sep;
+      while ((sep = buffer.indexOf("\n\n")) !== -1) {
+        const raw = buffer.slice(0, sep).trim();
+        buffer = buffer.slice(sep + 2);
+        if (!raw.startsWith("data:")) continue;
+        let evt;
+        try {
+          evt = JSON.parse(raw.slice(5).trim());
+        } catch (_) {
+          continue;
+        }
+        if (evt.type === "delta") {
+          ensureAssistant();
+          acc += evt.text || "";
+          assistant.text = acc;
+          updateStreamingBubble(acc);
+        } else if (evt.type === "done") {
+          ensureAssistant();
+          assistant.text = evt.answer || acc;
+          assistant.suggested_actions = evt.suggested_actions || [];
+          assistant.used_products = evt.used_products || [];
+          assistant.agent = evt.agent || "StoreAI";
+          assistant.source = evt.source || "rule_based";
+          streamDone = true;
+        }
+      }
+    }
+    if (!assistant) throw new Error("Пустой ответ");
   } catch (error) {
     userMessage.status = "error";
-    state.chat.messages.push(createChatMessage("assistant", `Не смог получить ответ: ${error.message}`, { suggested_actions: ["Повторить вопрос"] }));
+    if (!assistant) {
+      state.chat.messages.push(
+        createChatMessage("assistant", `Не смог получить ответ: ${error.message}`, { suggested_actions: ["Повторить вопрос"] }),
+      );
+    }
   } finally {
     state.chat.loading = false;
     saveChatMessages();
